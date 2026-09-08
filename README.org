@@ -161,3 +161,16 @@ emacsclient --eval '(load "/path/to/furball/tests/furball-evil-tests.el")'
 
 Inspect the ERT results buffer in Emacs. Do not use
 =ert-run-tests-batch-and-exit= against the shared server.
+
+* Commit messages
+
+Enable the repository's Conventional Commits hook after cloning:
+
+#+begin_src sh
+git config --local core.hooksPath .githooks
+#+end_src
+
+The =commit-msg= hook validates =type(scope): description= headers (scope is
+optional). Use =!= before the colon for breaking changes. Accepted types are
+=feat=, =fix=, =docs=, =style=, =refactor=, =perf=, =test=, =build=, =ci=,
+=chore=, and =revert=. Run =sh tests/commit-msg-hook.sh= to check the validator.

@@ -1,0 +1,15 @@
+#!/bin/sh
+# Validate the Conventional Commits header before Git records a commit.
+set -eu
+if ! LC_ALL=C awk 'NR == 1 {
+  valid = ($0 ~ /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^()[:cntrl:]]+\))?!?: [^[:space:]].*$/)
+}
+END { exit !valid }' "$1"; then
+  cat >&2 <<'MESSAGE'
+Commit rejected: use type(scope): description or type: description.
+Types: feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert.
+An optional ! before the colon marks a breaking change.
+Example: feat(traceback): add source navigation
+MESSAGE
+  exit 1
+fi
