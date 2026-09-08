@@ -13,6 +13,7 @@
 ;;; Code:
 
 (require 'browse-url)
+(require 'compile)
 (require 'org-faces)
 (require 'furball-api)
 
@@ -23,13 +24,19 @@
 Each alist has :name, :kind (monitors or logs), and :query.
 Optional keys are :site and :time-range (for example, \"1h\").
 :log-view-functions is a list of function symbols accepting one Furball buffer.
+:directory-abbrev-alist maps traceback path regexps to local directories.
+:project-directory-id-fn accepts a Furball buffer and returns its
+base directory.
 Example: (((:name . \"Sidekick\") (:kind . monitors)
            (:query . \"tag:\\\"component:sidekick\\\"\")))."
   :type '(repeat (alist :key-type (choice (const :name) (const :kind)
                                          (const :query) (const :site)
-                                         (const :time-range) (const :log-view-functions))
+                                         (const :time-range) (const :log-view-functions)
+                                         (const :directory-abbrev-alist)
+                                         (const :project-directory-id-fn))
                         :value-type (choice string (const monitors) (const logs)
-                                            (repeat function))))
+                                            (repeat function) function
+                                            (alist :key-type regexp :value-type directory))))
   :group 'furball)
 
 (defface furball-heading '((t :inherit font-lock-function-name-face :weight bold))
@@ -59,7 +66,7 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
                        ("TAB" . furball-toggle-log-preview) ("<tab>" . furball-toggle-log-preview) ("<backtab>" . furball-previous-item)
                        ("m" . furball-more) ("l" . furball-search-menu)
                        ("L" . furball-search-menu) ("v" . furball-saved-views-menu)
-                       ("x" . furball-log-functions-menu)
+                       ("x" . furball-log-functions-menu) ("c" . furball-open-traceback)
                        ("Q" . quit-window)
                        ("u" . furball-url-menu) ("b" . furball-browse)
                        ("t" . furball-time-menu) ("s" . furball-status-menu)
@@ -164,11 +171,13 @@ Completion at point uses syntax and values observed in the source view."
       (furball--open-monitor (map-elt view :monitor-id) (map-elt view :site)))
     (furball--open-view view (map-elt view :monitor-id))))
 
-(defun furball--open-monitor (id site &optional functions)
-  "Open current monitor ID on SITE, carrying log view FUNCTIONS."
+(defun furball--open-monitor (id site &optional functions context)
+  "Open current monitor ID on SITE, carrying log view FUNCTIONS and path CONTEXT."
   (furball--open-view `((:kind . monitor) (:monitor-id . ,id)
                        (:name . ,(format "Monitor %s" id)) (:site . ,site)
-                       (:log-view-functions . ,functions))))
+                       (:log-view-functions . ,functions)
+                       (:directory-abbrev-alist . ,(map-elt context :directory-abbrev-alist))
+                       (:project-directory-id-fn . ,(map-elt context :project-directory-id-fn)))))
 
 (defun furball-refresh ()
   "Refresh the current view, retaining old results until a request succeeds."
@@ -368,7 +377,9 @@ Completion at point uses syntax and values observed in the source view."
              (map-elt monitor 'name) (map-elt monitor 'id))
      (list 'monitor (map-elt view :site) (map-elt monitor 'id)) 'monitor
      `((:monitor-id . ,(map-elt monitor 'id)) (:site . ,(map-elt view :site))
-       (:log-view-functions . ,(map-elt view :log-view-functions))))))
+       (:log-view-functions . ,(map-elt view :log-view-functions))
+       (:directory-abbrev-alist . ,(map-elt view :directory-abbrev-alist))
+       (:project-directory-id-fn . ,(map-elt view :project-directory-id-fn))))))
 
 (defun furball-toggle-log-preview ()
   "Expand or collapse the log at point without leaving the results buffer."
@@ -531,6 +542,43 @@ Preserve Datadog variables and conditional markup verbatim."
       (insert (json-encode log)))
     (insert "\n")))
 
+(defun furball--configure-traceback-parser ()
+  "Recognize Python exception-group frames alongside built-in formats."
+  (setq-local compilation-error-regexp-alist
+              (cons '("^[ \t]*[|+][ \t|+]*File \"\\([^\"\n]+\\)\", line \\([0-9]+\\)" 1 2)
+                    compilation-error-regexp-alist)))
+
+(defun furball-open-traceback ()
+  "Open the current log traceback with compilation navigation in this window."
+  (interactive)
+  (let* ((source (current-buffer))
+         (view (or (get-text-property (point) 'furball-view)
+                   (map-elt furball--state :view)))
+         (log (if (derived-mode-p 'furball-log-mode)
+                  (map-elt furball--state :log)
+                (and (eq (get-text-property (point) 'furball-action) 'log)
+                     (get-text-property (point) 'furball-value))))
+         (traces (and log (furball--log-tracebacks log)))
+         (resolver (map-elt view :project-directory-id-fn))
+         (directory (if resolver (funcall resolver source) default-directory))
+         (abbreviations (map-elt view :directory-abbrev-alist)))
+    (unless log (user-error "Select a log row or reopen its full-log buffer"))
+    (unless (and (stringp directory) (file-name-absolute-p directory)
+                 (file-directory-p directory))
+      (user-error "Project directory must be an existing absolute directory"))
+    (let ((buffer (generate-new-buffer "*furball: Traceback*")))
+      (with-current-buffer buffer
+        (insert (if traces (mapconcat #'cdr traces "\n\n")
+                  (or (map-nested-elt log '(attributes message)) "")) "\n")
+        (compilation-mode)
+        (furball--configure-traceback-parser)
+        (setq-local default-directory (file-name-as-directory directory))
+        (setq-local directory-abbrev-alist (copy-tree abbreviations))
+        (setq-local compilation-transform-file-match-alist
+                    (mapcar (lambda (entry) (list (car entry) (cdr entry))) abbreviations))
+        (goto-char (point-min)))
+      (switch-to-buffer buffer))))
+
 (defun furball-open-at-point ()
   "Open the saved view, monitor, group logs, or log at point."
   (interactive)
@@ -538,7 +586,7 @@ Preserve Datadog variables and conditional markup verbatim."
     (pcase (get-text-property (point) 'furball-action)
       ('view (furball--open-view value))
       ('monitor (furball--open-monitor (map-elt value :monitor-id) (map-elt value :site)
-                                       (map-elt value :log-view-functions)))
+                                       (map-elt value :log-view-functions) value))
       ('group (furball--monitor-logs value))
       ('log
        (let ((buffer (generate-new-buffer "*furball: Log details*"))
@@ -571,6 +619,8 @@ Preserve Datadog variables and conditional markup verbatim."
      `((:kind . logs) (:name . ,(format "Logs: %s" (map-elt monitor 'name)))
        (:site . ,(map-nested-elt furball--state '(:view :site)))
        (:log-view-functions . ,(map-nested-elt furball--state '(:view :log-view-functions)))
+       (:directory-abbrev-alist . ,(map-nested-elt furball--state '(:view :directory-abbrev-alist)))
+       (:project-directory-id-fn . ,(map-nested-elt furball--state '(:view :project-directory-id-fn)))
        (:monitor-id . ,(map-elt monitor 'id)) (:query . ,query)
        (:group-filter . ,(and group (not (member group '("*" "")))
                               (furball--group-filter group (map-elt parsed :group-by))))

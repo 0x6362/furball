@@ -78,10 +78,10 @@
 
 (ert-deftest furball-evil-view-actions-work-without-transient ()
   (dolist (entry '((furball-mode
-                    ("x" . furball-log-functions-menu)
+                    ("x" . furball-log-functions-menu) ("c" . furball-open-traceback)
                     ("v" . furball-saved-views-menu) ("L" . furball-search-menu))
                    (furball-log-mode
-                    ("x" . furball-log-functions-menu)
+                    ("x" . furball-log-functions-menu) ("c" . furball-open-traceback)
                     ("g" . beginning-of-buffer) ("G" . end-of-buffer) ("Q" . quit-window))
                    (furball-query-mode
                     ("r" . furball-query-run) ("c" . completion-at-point) ("Q" . quit-window))))

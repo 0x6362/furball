@@ -368,6 +368,28 @@
     (should (string-search "Message\nwith embedded traceback" (buffer-string)))
     (should (string-search "No separate traceback field" (buffer-string)))))
 
+(ert-deftest furball-log-preview-toggles-and-survives-render ()
+  (with-temp-buffer
+    (furball-mode)
+    (setq furball--state
+          '((:view . ((:kind . logs) (:name . "Fixture")))
+            (:rows . (((id . "preview")
+                       (attributes . ((message . "Failure\nMore context")
+                                      (attributes . ((error . ((stack . "Full stack"))))))))))))
+    (furball--render)
+    (goto-char (point-min))
+    (furball-next-item)
+    (should-not (string-match-p "Full stack" (buffer-string)))
+    (furball-toggle-log-preview)
+    (should (string-match-p "Full stack" (buffer-string)))
+    (should buffer-read-only)
+    (should (eq (get-text-property (point) 'furball-action) 'log))
+    (furball--render)
+    (should (string-match-p "Full stack" (buffer-string)))
+    (furball-toggle-log-preview)
+    (should-not (string-match-p "Full stack" (buffer-string)))
+    (should-not (string-match-p "More context" (buffer-string)))))
+
 (ert-deftest furball-previous-item-visits-adjacent-and-separated-rows ()
   (dolist (separator '("" "Heading\n"))
     (with-temp-buffer
@@ -393,27 +415,52 @@
         (furball-previous-item)
         (should (= (point) (nth 2 starts)))))))
 
-(ert-deftest furball-log-preview-toggles-and-survives-render ()
+(ert-deftest furball-traceback-resolves-source-directory-and-maps-paths ()
+  (save-window-excursion
+    (with-temp-buffer
+      (switch-to-buffer (current-buffer))
+      (furball-mode)
+      (let* ((source (current-buffer))
+             received
+             (view `((:kind . logs)
+                     (:directory-abbrev-alist . (("^/app/" . "/tmp/")))
+                     (:project-directory-id-fn . ,(lambda (buffer)
+                                                    (setq received buffer) "/tmp/"))))
+             traceback)
+        (let ((inhibit-read-only t))
+          (furball--log-row
+           '((id . "trace") (attributes . ((attributes . ((error.stack . "Full trace"))))))
+           view))
+        (goto-char (point-min))
+        (unwind-protect
+            (progn
+              (furball-open-traceback)
+              (setq traceback (current-buffer))
+              (should (eq source received))
+              (should (derived-mode-p 'compilation-mode))
+              (should (equal default-directory "/tmp/"))
+              (should (equal compilation-transform-file-match-alist '(("^/app/" "/tmp/"))))
+              (should (equal (buffer-substring-no-properties (point-min) (point-max)) "Full trace\n"))
+              (should buffer-read-only))
+          (when (buffer-live-p traceback) (kill-buffer traceback)))))))
+
+(ert-deftest furball-compilation-recognizes-exception-group-frames ()
   (with-temp-buffer
-    (furball-mode)
-    (setq furball--state
-          '((:view . ((:kind . logs) (:name . "Fixture")))
-            (:rows . (((id . "preview")
-                       (attributes . ((message . "Failure\nMore context")
-                                      (attributes . ((error . ((stack . "Full stack"))))))))))))
-    (furball--render)
-    (goto-char (point-min))
-    (furball-next-item)
-    (should-not (string-match-p "Full stack" (buffer-string)))
-    (furball-toggle-log-preview)
-    (should (string-match-p "Full stack" (buffer-string)))
-    (should buffer-read-only)
-    (should (eq (get-text-property (point) 'furball-action) 'log))
-    (furball--render)
-    (should (string-match-p "Full stack" (buffer-string)))
-    (furball-toggle-log-preview)
-    (should-not (string-match-p "Full stack" (buffer-string)))
-    (should-not (string-match-p "More context" (buffer-string)))))
+    (insert "  + Exception Group Traceback (most recent call last):\n"
+            "  |   File \"/app/worker.py\", line 12, in run\n"
+            "  |     raise ValueError(\"failed\")\n"
+            "    |   File \"/app/nested.py\", line 34, in task\n"
+            "    | ValueError: failed\n"
+            "  File \"/app/plain.py\", line 56, in main\n")
+    (let ((original (buffer-string)))
+      (compilation-mode)
+      (furball--configure-traceback-parser)
+      (font-lock-ensure)
+      (compilation--ensure-parse (point-max))
+      (should (= compilation-num-errors-found 3))
+      (should (text-property-not-all (point-min) (point-max) 'compilation-message nil))
+      (should (text-property-not-all (point-min) (point-max) 'font-lock-face nil))
+      (should (equal original (buffer-substring-no-properties (point-min) (point-max)))))))
 
 (provide 'furball-tests)
 ;;; furball-tests.el ends here

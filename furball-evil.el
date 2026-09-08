@@ -18,6 +18,7 @@
 
 (declare-function furball-menu "furball-transient")
 (declare-function furball-log-functions-menu "furball-transient")
+(declare-function furball-open-traceback "furball")
 (declare-function furball-query-run "furball")
 (declare-function furball-next-item "furball")
 (declare-function furball-previous-item "furball")
@@ -30,6 +31,7 @@
     (kbd "q") #'quit-window
     (kbd "?") #'furball-menu
     (kbd "x") #'furball-log-functions-menu
+    (kbd "c") #'furball-open-traceback
     (kbd "g") #'beginning-of-buffer
     (kbd "G") #'end-of-buffer
     (kbd "Q") #'quit-window)

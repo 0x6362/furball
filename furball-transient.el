@@ -218,6 +218,7 @@
 (transient-define-prefix furball-dashboard-menu ()
   "Browse Furball's configured views."
   [["Browse"
+    ("c" "Traceback in compilation mode" furball-open-traceback)
     ("RET" "Open selected row" furball-open-at-point :inapt-if-not furball--selected-row-p)
     ("v" "Saved views" furball-saved-views-menu)
     ("x" "Log view functions" furball-log-functions-menu :if furball--log-view-functions)
@@ -246,6 +247,7 @@
 (transient-define-prefix furball-logs-menu ()
   "Browse logs and adjust the search window."
   [["Logs"
+    ("c" "Traceback in compilation mode" furball-open-traceback)
     ("TAB" "Toggle inline preview" furball-toggle-log-preview)
     ("x" "Log view functions" furball-log-functions-menu :if furball--log-view-functions)
     ("RET" "Full log and traceback" furball-open-at-point :inapt-if-not furball--selected-row-p)
@@ -281,6 +283,7 @@
 (transient-define-prefix furball-log-menu ()
   "Navigate the full log and traceback."
   ["Log details"
+   ("c" "Traceback in compilation mode" furball-open-traceback)
    ("x" "Log view functions" furball-log-functions-menu :if furball--log-view-functions)
    ("g" "Beginning" beginning-of-buffer)
    ("G" "End" end-of-buffer)

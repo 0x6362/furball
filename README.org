@@ -63,6 +63,38 @@ Optional =:site= overrides the configured site. Log views accept
 =:time-range=, such as =15m=, =1h=, or =2d=; the default is one hour.
 Editing a running view does not modify its saved customization.
 
+* Traceback source navigation
+
+Use =? c= on a log row or in its full-log buffer to open a read-only
+=compilation-mode= buffer in the same window. Emacs recognizes supported
+stack-frame formats and provides source navigation. If no separate stack
+field exists, the log message is used.
+
+Saved views can supply either or both keys below. They follow monitor
+rows through monitor details, matching logs, and full-log buffers:
+
+#+begin_src emacs-lisp
+(:directory-abbrev-alist . (("^/app/" . "/Users/cate/dev/prosite/")))
+(:project-directory-id-fn . my/sidekick-project-directory)
+
+(defun my/sidekick-project-directory (buffer)
+  "Return the source checkout for the Furball BUFFER."
+  (ignore buffer)
+  (expand-file-name "~/dev/prosite/"))
+#+end_src
+
+The callback receives the originating Furball buffer and must return an
+existing absolute directory. It can inspect that buffer to choose a
+monorepo subdirectory. Without it, the source buffer's =default-directory=
+is used. Relative source paths resolve against this base directory.
+
+The abbreviation alist uses =(REGEXP . REPLACEMENT)= entries. Furball sets
+it buffer-locally and translates the entries to compilation's
+=compilation-transform-file-match-alist= for source-file lookup. This allows
+container path prefixes to map to local paths without rewriting the displayed
+traceback. Compilation parsing determines which frame formats are navigable;
+this does not perform general language detection.
+
 * Log view functions
 
 Add =:log-view-functions= to a saved log view to expose your own functions:
@@ -138,7 +170,7 @@ state, with application commands available in normal and motion states;
 =j= and =k= move between selectable rows; =h= and =l= move left and right.
 Use =L= for log search in Evil and in the Transient menu.
 View-menu actions also work directly in normal and motion states: =x= opens
-configured functions and =v= selects a saved view.
+configured functions, =c= opens a traceback, and =v= selects a saved view.
 In the query editor, =r= runs the query and =c= completes at point in normal
 state; insert-state typing is unchanged. Query buffers start in insert
 state. =C-c C-c= and =C-c C-k= work in normal, insert, and visual states.
