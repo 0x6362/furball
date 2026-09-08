@@ -39,7 +39,8 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
                                             (alist :key-type regexp :value-type directory))))
   :group 'furball)
 
-(defface furball-heading '((t :inherit font-lock-function-name-face :weight bold))
+(defface furball-heading
+  '((t :inherit font-lock-function-name-face :weight bold))
   "Face for dashboard sections."
   :group 'furball)
 (defface furball-alert '((t :inherit error :weight bold))
@@ -50,6 +51,22 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   :group 'furball)
 (defface furball-ok '((t :inherit success))
   "Face for healthy states."
+  :group 'furball)
+
+(defface furball-log-error
+  '((t :inherit error))
+  "Face for error-level log summaries."
+  :group 'furball)
+(defface furball-log-warning
+  '((t :inherit warning))
+  "Face for warning-level log summaries."
+  :group 'furball)
+(defface furball-log-header '((t :inherit furball-heading))
+  "Face for log timestamps, service names, and hosts."
+  :group 'furball)
+(defface furball-log-highlight
+  '((t :inherit hl-line))
+  "Face for the selected Furball row."
   :group 'furball)
 
 (defvar-local furball--state nil
@@ -85,6 +102,7 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   "Read-only Datadog results with keyboard navigation."
   (setq-local truncate-lines t)
   (setq-local cursor-type 'hbar)
+  (setq-local hl-line-face 'furball-log-highlight)
   (hl-line-mode 1))
 
 (defvar furball-log-mode-map
@@ -302,8 +320,6 @@ Completion at point uses syntax and values observed in the source view."
         (position (point))
         (view (map-elt furball--state :view)))
     (erase-buffer)
-    (insert (propertize "FURBALL\n" 'face '(:inherit furball-heading :height 1.4)))
-    (insert (propertize "Datadog monitors & logs\n" 'face 'shadow))
     (if (eq (map-elt view :kind) 'dashboard)
         (furball--render-dashboard)
       (insert (format "\n%s  ·  %s\n" (map-elt view :name) (map-elt view :site)))
@@ -395,6 +411,13 @@ Completion at point uses syntax and values observed in the source view."
                      (cons key expanded)))))
       (furball--render))))
 
+(defun furball--log-level-face (status)
+  "Return the summary face for log STATUS."
+  (pcase (downcase (or status ""))
+    ((or "error" "critical" "alert" "emergency" "fatal") 'furball-log-error)
+    ((or "warn" "warning") 'furball-log-warning)
+    (_ 'default)))
+
 (defun furball--log-row (log &optional view)
   "Insert LOG with a foldable preview and optional saved VIEW context."
   (let* ((start (point))
@@ -404,9 +427,13 @@ Completion at point uses syntax and values observed in the source view."
     (furball--row
      (format "%s %s  %-7s  %s  %s\n    %s"
              (if expanded "▾" "▸")
-             (or (map-elt attrs 'timestamp) "") (or (map-elt attrs 'status) "")
-             (or (map-elt attrs 'service) "") (or (map-elt attrs 'host) "")
-             (car (split-string (or (map-elt attrs 'message) "") "\n")))
+             (propertize (or (map-elt attrs 'timestamp) "") 'face 'furball-log-header)
+             (propertize (or (map-elt attrs 'status) "") 'face
+                         (furball--log-level-face (map-elt attrs 'status)))
+             (propertize (or (map-elt attrs 'service) "") 'face 'furball-log-header)
+             (propertize (or (map-elt attrs 'host) "") 'face 'furball-log-header)
+             (propertize (car (split-string (or (map-elt attrs 'message) "") "\n"))
+                         'face (furball--log-level-face (map-elt attrs 'status))))
      key 'log log)
     (when expanded
       (insert (propertize "    Message\n" 'face 'furball-heading))
