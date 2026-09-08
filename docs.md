@@ -10,6 +10,7 @@ Path: @/
 ### How it fits into the larger codebase
 
 - Built-in Emacs process, JSON, and buffer facilities provide the runtime. Datadog Pup handles authentication and API access for monitor search, monitor details, and log search.
+- Transient 0.7 or later provides contextual menus for every view. Result buffers retain long content and the query editor retains unsent drafts.
 - User-facing configuration consists of ordered saved-view alists, a default site, a Pup executable path, and a request timeout.
 - Pure query transformations resolve URLs and count monitor expressions into request scopes; the asynchronous transport delivers data or errors to the UI.
 
@@ -17,6 +18,7 @@ Path: @/
 
 - Each request starts Pup with `--no-agent --output json api PATH --method METHOD` through `make-process`, without a shell. JSON request bodies go to stdin via `--input -`; each child receives its selected `DD_SITE`.
 - The transport parses stdout as JSON, reports process failures with stderr context, and terminates timed-out processes. Completion delivers one result and releases process buffers and timers.
+- Search, URL, time, status, and saved-view menus collect arguments before explicit application; cancelling preserves the active scope. Contextual actions coexist with direct buffer shortcuts.
 - The landing page fetches compact previews independently; selecting a view opens a full results buffer.
 - Buffer-local alist snapshots track the view, fixed log scope, fetched rows, pagination, and freshness. Updates replace records rather than modifying saved customization.
 - Request tokens reject superseded asynchronous responses. Pagination reuses the resolved time window.

@@ -17,7 +17,8 @@
     (dolist (state '(normal motion emacs))
       (evil-change-state state)
       (dolist (binding furball--result-bindings)
-        (should (eq (key-binding (kbd (car binding))) (cdr binding)))))))
+        (unless (and (memq state '(normal motion)) (equal (car binding) "l"))
+          (should (eq (key-binding (kbd (car binding))) (cdr binding))))))))
 
 (ert-deftest furball-evil-results-have-row-motions ()
   (with-temp-buffer
@@ -25,6 +26,8 @@
     (evil-local-mode 1)
     (dolist (state '(normal motion))
       (evil-change-state state)
+      (should (eq (key-binding (kbd "h")) #'evil-backward-char))
+      (should (eq (key-binding (kbd "l")) #'evil-forward-char))
       (should (eq (key-binding (kbd "j")) #'furball-next-item))
       (should (eq (key-binding (kbd "k")) #'furball-previous-item)))))
 
@@ -49,6 +52,46 @@
     (dolist (state '(normal motion emacs))
       (evil-change-state state)
       (should (eq (key-binding (kbd "q")) #'quit-window)))))
+
+(ert-deftest furball-evil-dashboard-opens-without-capturing-motions ()
+  (save-window-excursion
+    (let (menu-opened)
+      (cl-letf (((symbol-function 'furball-refresh) #'ignore)
+                ((symbol-function 'furball-menu)
+                 (lambda () (interactive) (setq menu-opened t))))
+        (call-interactively #'furball))
+      (should-not menu-opened)
+      (evil-local-mode 1)
+      (evil-normal-state)
+      (should (eq (key-binding (kbd "l")) #'evil-forward-char))
+      (should (eq (key-binding (kbd "j")) #'furball-next-item)))))
+
+(ert-deftest furball-evil-log-details-preserve-hjkl ()
+  (with-temp-buffer
+    (furball-log-mode)
+    (evil-local-mode 1)
+    (dolist (state '(normal motion))
+      (evil-change-state state)
+      (dolist (binding '(("h" . evil-backward-char) ("j" . evil-next-line)
+                         ("k" . evil-previous-line) ("l" . evil-forward-char)))
+        (should (eq (key-binding (kbd (car binding))) (cdr binding)))))))
+
+(ert-deftest furball-evil-view-actions-work-without-transient ()
+  (dolist (entry '((furball-mode
+                    ("x" . furball-log-functions-menu)
+                    ("v" . furball-saved-views-menu) ("L" . furball-search-menu))
+                   (furball-log-mode
+                    ("x" . furball-log-functions-menu)
+                    ("g" . beginning-of-buffer) ("G" . end-of-buffer) ("Q" . quit-window))
+                   (furball-query-mode
+                    ("r" . furball-query-run) ("c" . completion-at-point) ("Q" . quit-window))))
+    (with-temp-buffer
+      (funcall (car entry))
+      (evil-local-mode 1)
+      (dolist (state '(normal motion))
+        (evil-change-state state)
+        (dolist (binding (cdr entry))
+          (should (eq (key-binding (kbd (car binding))) (cdr binding))))))))
 
 (provide 'furball-evil-tests)
 ;;; furball-evil-tests.el ends here

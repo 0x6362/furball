@@ -6,7 +6,7 @@ keyboard navigation, and drill-down buffers.
 
 * Setup
 
-Requires Emacs 29.1 or later and [[https://github.com/DataDog/pup][Datadog Pup]]. Install Pup using its
+Requires Emacs 29.1 or later, Transient 0.7 or later, and [[https://github.com/DataDog/pup][Datadog Pup]]. Install Pup using its
 Homebrew tap:
 
 #+begin_src sh
@@ -63,7 +63,42 @@ Optional =:site= overrides the configured site. Log views accept
 =:time-range=, such as =15m=, =1h=, or =2d=; the default is one hour.
 Editing a running view does not modify its saved customization.
 
+* Log view functions
+
+Add =:log-view-functions= to a saved log view to expose your own functions:
+
+#+begin_src emacs-lisp
+((:name . "Sidekick task failures")
+ (:kind . logs)
+ (:query . "service:prosite-celery-titan-messaging env:prod")
+ (:log-view-functions . (my/sidekick-investigate-log my/copy-log-context)))
+#+end_src
+
+Use =? x= in that log view or its full-log buffer (or on a dashboard log
+preview). Functions receive one argument: the originating Furball buffer
+object. Full-log buffers contain the complete retrieved message, traceback,
+and JSON, so open a log before invoking a function that needs that context.
+The callback can use =with-current-buffer= and =buffer-substring-no-properties=
+to read it, then open a project or start an agent-shell session.
+
+The submenu assigns =1= through =9=, then =a= through =z=, in configuration
+order, using function names as labels. Up to 35 defined function symbols are
+supported. =C-g= cancels; letter keys, including =q=, belong to callbacks.
+Bindings only apply inside this submenu and do not override Evil navigation.
+
 * Browse and investigate
+
+Interactive =M-x furball= opens the dashboard, ready for navigation.
+Press =?= in results or log details, or =C-c ?= in the query editor, for
+commands relevant to that view. Long results and query drafts stay in
+their buffers while menus provide actions and editable arguments.
+
+The saved-view selector opens any configured view. The log-search menu
+lets you set a query, relative window, and Datadog site before fetching.
+Search, URL, time, and status menus apply their arguments with =RET=;
+opening or cancelling a menu leaves the current scope unchanged. Within
+menus, =q= closes the menu; =Q= quits the view where offered. Direct buffer
+shortcuts remain available when no menu is active:
 
 | Key | Action |
 |-----+--------|
@@ -73,10 +108,10 @@ Editing a running view does not modify its saved customization.
 | =e= | Edit the current query in a separate buffer |
 | =g= | Refresh |
 | =m= | Fetch the next page |
-| =s= | Filter a monitor list by status |
-| =t= | Set a log view's relative time window |
-| =l= | Start a log search |
-| =u= | Import a Datadog logs URL |
+| =s= | Open the monitor status menu |
+| =t= | Open the relative time-window menu |
+| =l= | Open the log-search menu |
+| =u= | Open the URL-import menu |
 | =b= | Open the current view in Datadog |
 | =^= | Return to the landing page |
 | =q= | Quit the window |
@@ -99,7 +134,12 @@ Evil normal and motion states.
 When Evil is available, Furball loads its optional Evil integration
 without changing the ordinary Emacs bindings. Results start in normal
 state, with application commands available in normal and motion states;
-=j= and =k= move between selectable rows. Query buffers start in insert
+=j= and =k= move between selectable rows; =h= and =l= move left and right.
+Use =L= for log search in Evil and in the Transient menu.
+View-menu actions also work directly in normal and motion states: =x= opens
+configured functions and =v= selects a saved view.
+In the query editor, =r= runs the query and =c= completes at point in normal
+state; insert-state typing is unchanged. Query buffers start in insert
 state. =C-c C-c= and =C-c C-k= work in normal, insert, and visual states.
 
 Open an ALERT or WARN monitor, then select a group to show matching logs
@@ -129,10 +169,10 @@ and monitor expression forms are not supported.
 =from_ts= and =to_ts= timestamps. It preserves the exact fixed window,
 search, sort order, storage tier, and monitor/event identifiers. A linked
 monitor opens alongside the logs. Datadog visualization and aggregation
-options are not reproduced. Use =t= to explicitly switch to a recent window.
+options are not reproduced. Use =t= and apply to switch to a recent window.
 Pagination keeps the same window; refreshing a relative view advances it.
 Editing an expression's =.last= duration recalculates the start while keeping
-a fixed historical end; =t= switches explicitly to a latest window.
+a fixed historical end; applying the =t= menu switches to a latest window.
 
 Results show fetch time and errors. Previous results remain available during
 refresh or a failed request; if the query changed, they are labeled as
@@ -149,7 +189,7 @@ live credentials and do not establish live Datadog connectivity.
 With an Emacs server running, load and run the tests using =emacsclient=:
 
 #+begin_src sh
-emacsclient --eval '(progn (add-to-list (quote load-path) "/path/to/furball") (load "/path/to/furball/tests/furball-tests.el") (ert-run-tests-interactively "^furball-"))'
+emacsclient --eval '(progn (add-to-list (quote load-path) "/path/to/furball") (load "/path/to/furball/tests/furball-tests.el") (load "/path/to/furball/tests/furball-transient-tests.el") (ert-run-tests-interactively "^furball-"))'
 #+end_src
 
 If Evil is installed and available on =load-path=, also load

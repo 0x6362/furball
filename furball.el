@@ -2,7 +2,7 @@
 
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 ;; Version: 0.1.0
-;; Package-Requires: ((emacs "29.1"))
+;; Package-Requires: ((emacs "29.1") (transient "0.7.0"))
 ;; Keywords: tools
 
 ;;; Commentary:
@@ -22,12 +22,14 @@
   "Ordered saved views displayed by `furball'.
 Each alist has :name, :kind (monitors or logs), and :query.
 Optional keys are :site and :time-range (for example, \"1h\").
+:log-view-functions is a list of function symbols accepting one Furball buffer.
 Example: (((:name . \"Sidekick\") (:kind . monitors)
            (:query . \"tag:\\\"component:sidekick\\\"\")))."
   :type '(repeat (alist :key-type (choice (const :name) (const :kind)
                                          (const :query) (const :site)
-                                         (const :time-range))
-                        :value-type (choice string (const monitors) (const logs))))
+                                         (const :time-range) (const :log-view-functions))
+                        :value-type (choice string (const monitors) (const logs)
+                                            (repeat function))))
   :group 'furball)
 
 (defface furball-heading '((t :inherit font-lock-function-name-face :weight bold))
@@ -55,10 +57,13 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
                        ("RET" . furball-open-at-point) ("o" . furball-open-at-point)
                        ("n" . furball-next-item) ("p" . furball-previous-item)
                        ("TAB" . furball-next-item) ("<backtab>" . furball-previous-item)
-                       ("m" . furball-more) ("l" . furball-logs)
-                       ("u" . furball-open-url) ("b" . furball-browse)
-                       ("t" . furball-time-range) ("s" . furball-status-filter)
-                       ("^" . furball) ("q" . quit-window))
+                       ("m" . furball-more) ("l" . furball-search-menu)
+                       ("L" . furball-search-menu) ("v" . furball-saved-views-menu)
+                       ("x" . furball-log-functions-menu)
+                       ("Q" . quit-window)
+                       ("u" . furball-url-menu) ("b" . furball-browse)
+                       ("t" . furball-time-menu) ("s" . furball-status-menu)
+                       ("^" . furball) ("q" . quit-window) ("?" . furball-menu))
   "Result-view commands shared by Emacs and Evil keymaps.")
 
 (defvar furball-mode-map
@@ -75,12 +80,20 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   (setq-local cursor-type 'hbar)
   (hl-line-mode 1))
 
+(defvar furball-log-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "?") #'furball-menu)
+    map)
+  "Keymap for full log records.")
+
 (define-derived-mode furball-log-mode special-mode "Furball Log"
   "Read a complete log message, traceback, and structured record."
-  (setq-local truncate-lines nil))
+  (setq-local truncate-lines nil)
+  (setq-local header-line-format " ? Actions · q Return to results"))
 
 (defconst furball--query-bindings
-  '(("C-c C-c" . furball-query-run) ("C-c C-k" . quit-window))
+  '(("C-c C-c" . furball-query-run) ("C-c C-k" . quit-window)
+    ("C-c ?" . furball-menu))
   "Query-editor commands shared by Emacs and Evil keymaps.")
 
 (defvar furball-query-mode-map
@@ -93,7 +106,7 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
 (define-derived-mode furball-query-mode text-mode "Furball Query"
   "Edit a Datadog query; use \\<furball-query-mode-map>\\[furball-query-run] to run it.
 Completion at point uses syntax and values observed in the source view."
-  (setq-local header-line-format " Edit query   C-c C-c run   M-TAB complete   C-c C-k return")
+  (setq-local header-line-format " Edit query   C-c ? Actions   C-c C-c run   C-c C-k return")
   (add-hook 'completion-at-point-functions #'furball-completion-at-point nil t))
 
 (defun furball--set-state (changes)
@@ -151,10 +164,11 @@ Completion at point uses syntax and values observed in the source view."
       (furball--open-monitor (map-elt view :monitor-id) (map-elt view :site)))
     (furball--open-view view (map-elt view :monitor-id))))
 
-(defun furball--open-monitor (id site)
-  "Open current monitor ID on SITE."
+(defun furball--open-monitor (id site &optional functions)
+  "Open current monitor ID on SITE, carrying log view FUNCTIONS."
   (furball--open-view `((:kind . monitor) (:monitor-id . ,id)
-                       (:name . ,(format "Monitor %s" id)) (:site . ,site))))
+                       (:name . ,(format "Monitor %s" id)) (:site . ,site)
+                       (:log-view-functions . ,functions))))
 
 (defun furball-refresh ()
   "Refresh the current view, retaining old results until a request succeeds."
@@ -310,9 +324,7 @@ Completion at point uses syntax and values observed in the source view."
         ('monitor (furball--render-monitor)))
       (when (map-elt furball--state :next)
         (insert "\nMore results available — m loads the next page\n")))
-    (furball--heading "Quick actions")
-    (insert "RET open   e edit query   g refresh   m more   b browser\n"
-            "l log query   u log URL   s status filter   t time range   ^ home   q quit\n")
+    (insert (propertize "\n? Actions · RET Open · n/p Navigate · q Quit\n" 'face 'shadow))
     (goto-char (min position (point-max)))
     (when key
       (let ((at (point-min)) (found nil))
@@ -339,7 +351,7 @@ Completion at point uses syntax and values observed in the source view."
           (insert (propertize (format "  %s\n" (map-elt section :error)) 'face 'error)))
          ((eq (map-elt view :kind) 'monitors)
           (furball--render-monitors (map-elt data 'monitors) view))
-         (t (dolist (log (map-elt data 'data)) (furball--log-row log))
+         (t (dolist (log (map-elt data 'data)) (furball--log-row log view))
             (unless (map-elt data 'data) (insert "  No matching logs in this window.\n"))))
         (when (map-elt section :fetched-at)
           (insert (propertize
@@ -355,17 +367,20 @@ Completion at point uses syntax and values observed in the source view."
      (format "  %s  %s  #%s" (furball--status (map-elt monitor 'status))
              (map-elt monitor 'name) (map-elt monitor 'id))
      (list 'monitor (map-elt view :site) (map-elt monitor 'id)) 'monitor
-     `((:monitor-id . ,(map-elt monitor 'id)) (:site . ,(map-elt view :site))))))
+     `((:monitor-id . ,(map-elt monitor 'id)) (:site . ,(map-elt view :site))
+       (:log-view-functions . ,(map-elt view :log-view-functions))))))
 
-(defun furball--log-row (log)
-  "Insert LOG with inline message and a link to its traceback and fields."
-  (let ((attrs (map-elt log 'attributes)))
+(defun furball--log-row (log &optional view)
+  "Insert LOG with its traceback link and optional saved VIEW context."
+  (let ((start (point))
+        (attrs (map-elt log 'attributes)))
     (furball--row
      (format "  %s  %-7s  %s  %s\n    %s"
              (or (map-elt attrs 'timestamp) "") (or (map-elt attrs 'status) "")
              (or (map-elt attrs 'service) "") (or (map-elt attrs 'host) "")
              (replace-regexp-in-string "\n" "\n    " (or (map-elt attrs 'message) "")))
-     (list 'log (map-elt log 'id)) 'log log)))
+     (list 'log (map-elt log 'id)) 'log log)
+    (when view (put-text-property start (point) 'furball-view view))))
 
 (defun furball--render-logs ()
   "Insert the log snapshot with its exact scope and provenance."
@@ -496,14 +511,18 @@ Preserve Datadog variables and conditional markup verbatim."
   (let ((value (get-text-property (point) 'furball-value)))
     (pcase (get-text-property (point) 'furball-action)
       ('view (furball--open-view value))
-      ('monitor (furball--open-monitor (map-elt value :monitor-id) (map-elt value :site)))
+      ('monitor (furball--open-monitor (map-elt value :monitor-id) (map-elt value :site)
+                                       (map-elt value :log-view-functions)))
       ('group (furball--monitor-logs value))
       ('log
-       (let ((buffer (generate-new-buffer "*furball: Log details*")))
+       (let ((buffer (generate-new-buffer "*furball: Log details*"))
+             (view (or (get-text-property (point) 'furball-view)
+                       (map-elt furball--state :view))))
          (with-current-buffer buffer
            (furball--insert-log-details value)
            (goto-char (point-min))
-           (furball-log-mode))
+           (furball-log-mode)
+           (setq furball--state `((:view . ,view) (:log . ,value))))
          (switch-to-buffer buffer)))
       (_ (user-error "Select a row with TAB first")))))
 
@@ -525,6 +544,7 @@ Preserve Datadog variables and conditional markup verbatim."
     (furball--open-view
      `((:kind . logs) (:name . ,(format "Logs: %s" (map-elt monitor 'name)))
        (:site . ,(map-nested-elt furball--state '(:view :site)))
+       (:log-view-functions . ,(map-nested-elt furball--state '(:view :log-view-functions)))
        (:monitor-id . ,(map-elt monitor 'id)) (:query . ,query)
        (:group-filter . ,(and group (not (member group '("*" "")))
                               (furball--group-filter group (map-elt parsed :group-by))))
@@ -576,7 +596,7 @@ Preserve Datadog variables and conditional markup verbatim."
         (furball--set-state
          `((:view . ,(furball--with
                       view
-                      (append `((:query . ,query) (:base-query . nil))
+                      (append `((:query . ,query) (:base-query . nil) (:status-filter . nil))
                               (when (and (map-elt parsed :time-range)
                                          (not (equal (map-elt previous :time-range)
                                                      (map-elt parsed :time-range))))
@@ -612,7 +632,7 @@ Preserve Datadog variables and conditional markup verbatim."
          (base (or (map-elt view :base-query) (map-elt view :query))))
     (furball--set-state
      `((:view . ,(furball--with view
-                               `((:base-query . ,base)
+                               `((:base-query . ,base) (:status-filter . ,status)
                                  (:query . ,(if (equal status "All") base
                                               (format "(%s) status:\"%s\"" base status)))))))))
   (furball-refresh))
@@ -704,6 +724,8 @@ Preserve Datadog variables and conditional markup verbatim."
                                      (url-hexify-string (map-elt view :query)))))
       ('monitor (browse-url (format "%s/monitors/%s" base (map-elt view :monitor-id))))
       (_ (user-error "Open a saved view first")))))
+
+(require 'furball-transient)
 
 (with-eval-after-load 'evil
   (require 'furball-evil))
