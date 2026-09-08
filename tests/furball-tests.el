@@ -333,7 +333,7 @@
                                               (exc_info . ,stack)))))))
          details)
     (unwind-protect
-        (cl-letf (((symbol-function 'pop-to-buffer)
+        (cl-letf (((symbol-function 'switch-to-buffer)
                    (lambda (buffer &rest _) (setq details buffer))))
           (with-temp-buffer
             (furball-mode)
@@ -367,6 +367,31 @@
     (furball--insert-log-details '((attributes . ((message . "Message\nwith embedded traceback")))))
     (should (string-search "Message\nwith embedded traceback" (buffer-string)))
     (should (string-search "No separate traceback field" (buffer-string)))))
+
+(ert-deftest furball-previous-item-visits-adjacent-and-separated-rows ()
+  (dolist (separator '("" "Heading\n"))
+    (with-temp-buffer
+      (furball-mode)
+      (let ((inhibit-read-only t) starts)
+        (insert "Header\n")
+        (dolist (id '(first second third))
+          (push (point) starts)
+          (furball--row "Row\nExpanded preview\nMore lines" id 'log nil)
+          (insert separator))
+        (setq starts (nreverse starts))
+        (goto-char (nth 2 starts))
+        (furball-previous-item)
+        (should (= (point) (nth 1 starts)))
+        (furball-previous-item)
+        (should (= (point) (car starts)))
+        (furball-previous-item)
+        (should (= (point) (car starts)))
+        (goto-char (+ 7 (nth 2 starts)))
+        (furball-previous-item)
+        (should (= (point) (nth 1 starts)))
+        (goto-char (point-max))
+        (furball-previous-item)
+        (should (= (point) (nth 2 starts)))))))
 
 (provide 'furball-tests)
 ;;; furball-tests.el ends here
