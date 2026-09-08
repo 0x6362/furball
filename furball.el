@@ -56,7 +56,7 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   '(("g" . furball-refresh) ("e" . furball-edit-query)
                        ("RET" . furball-open-at-point) ("o" . furball-open-at-point)
                        ("n" . furball-next-item) ("p" . furball-previous-item)
-                       ("TAB" . furball-next-item) ("<backtab>" . furball-previous-item)
+                       ("TAB" . furball-toggle-log-preview) ("<tab>" . furball-toggle-log-preview) ("<backtab>" . furball-previous-item)
                        ("m" . furball-more) ("l" . furball-search-menu)
                        ("L" . furball-search-menu) ("v" . furball-saved-views-menu)
                        ("x" . furball-log-functions-menu)
@@ -324,7 +324,7 @@ Completion at point uses syntax and values observed in the source view."
         ('monitor (furball--render-monitor)))
       (when (map-elt furball--state :next)
         (insert "\nMore results available — m loads the next page\n")))
-    (insert (propertize "\n? Actions · RET Open · n/p Navigate · q Quit\n" 'face 'shadow))
+    (insert (propertize "\n? Actions · RET Open · TAB Preview · n/p Navigate · q Quit\n" 'face 'shadow))
     (goto-char (min position (point-max)))
     (when key
       (let ((at (point-min)) (found nil))
@@ -370,16 +370,42 @@ Completion at point uses syntax and values observed in the source view."
      `((:monitor-id . ,(map-elt monitor 'id)) (:site . ,(map-elt view :site))
        (:log-view-functions . ,(map-elt view :log-view-functions))))))
 
+(defun furball-toggle-log-preview ()
+  "Expand or collapse the log at point without leaving the results buffer."
+  (interactive)
+  (if (not (eq (get-text-property (point) 'furball-action) 'log))
+      (furball-next-item)
+    (let* ((key (get-text-property (point) 'furball-key))
+           (expanded (map-elt furball--state :expanded-logs)))
+      (furball--set-state
+       (list (cons :expanded-logs
+                   (if (member key expanded)
+                       (seq-remove (lambda (item) (equal item key)) expanded)
+                     (cons key expanded)))))
+      (furball--render))))
+
 (defun furball--log-row (log &optional view)
-  "Insert LOG with its traceback link and optional saved VIEW context."
-  (let ((start (point))
-        (attrs (map-elt log 'attributes)))
+  "Insert LOG with a foldable preview and optional saved VIEW context."
+  (let* ((start (point))
+         (attrs (map-elt log 'attributes))
+         (key (list 'log (or view (map-elt furball--state :view)) (map-elt log 'id)))
+         (expanded (member key (map-elt furball--state :expanded-logs))))
     (furball--row
-     (format "  %s  %-7s  %s  %s\n    %s"
+     (format "%s %s  %-7s  %s  %s\n    %s"
+             (if expanded "▾" "▸")
              (or (map-elt attrs 'timestamp) "") (or (map-elt attrs 'status) "")
              (or (map-elt attrs 'service) "") (or (map-elt attrs 'host) "")
-             (replace-regexp-in-string "\n" "\n    " (or (map-elt attrs 'message) "")))
-     (list 'log (map-elt log 'id)) 'log log)
+             (car (split-string (or (map-elt attrs 'message) "") "\n")))
+     key 'log log)
+    (when expanded
+      (insert (propertize "    Message\n" 'face 'furball-heading))
+      (insert (or (map-elt attrs 'message) "") "\n")
+      (dolist (trace (furball--log-tracebacks log))
+        (insert (propertize (format "    Traceback · %s\n" (car trace))
+                            'face 'furball-heading))
+        (insert (cdr trace) "\n")))
+    (add-text-properties start (point)
+                         (list 'furball-key key 'furball-action 'log 'furball-value log))
     (when view (put-text-property start (point) 'furball-view view))))
 
 (defun furball--render-logs ()

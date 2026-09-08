@@ -246,6 +246,7 @@
 (transient-define-prefix furball-logs-menu ()
   "Browse logs and adjust the search window."
   [["Logs"
+    ("TAB" "Toggle inline preview" furball-toggle-log-preview)
     ("x" "Log view functions" furball-log-functions-menu :if furball--log-view-functions)
     ("RET" "Full log and traceback" furball-open-at-point :inapt-if-not furball--selected-row-p)
     ("e" "Edit query" furball-edit-query)

@@ -103,7 +103,8 @@ shortcuts remain available when no menu is active:
 | Key | Action |
 |-----+--------|
 | =RET= / =o= | Open selected view, monitor, group logs, or full log record |
-| =n= / =TAB= | Next selectable row |
+| =TAB= | Expand/collapse the selected log inline |
+| =n= | Next selectable row |
 | =p= / =S-TAB= | Previous selectable row |
 | =e= | Edit the current query in a separate buffer |
 | =g= | Refresh |

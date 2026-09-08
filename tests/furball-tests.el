@@ -393,5 +393,27 @@
         (furball-previous-item)
         (should (= (point) (nth 2 starts)))))))
 
+(ert-deftest furball-log-preview-toggles-and-survives-render ()
+  (with-temp-buffer
+    (furball-mode)
+    (setq furball--state
+          '((:view . ((:kind . logs) (:name . "Fixture")))
+            (:rows . (((id . "preview")
+                       (attributes . ((message . "Failure\nMore context")
+                                      (attributes . ((error . ((stack . "Full stack"))))))))))))
+    (furball--render)
+    (goto-char (point-min))
+    (furball-next-item)
+    (should-not (string-match-p "Full stack" (buffer-string)))
+    (furball-toggle-log-preview)
+    (should (string-match-p "Full stack" (buffer-string)))
+    (should buffer-read-only)
+    (should (eq (get-text-property (point) 'furball-action) 'log))
+    (furball--render)
+    (should (string-match-p "Full stack" (buffer-string)))
+    (furball-toggle-log-preview)
+    (should-not (string-match-p "Full stack" (buffer-string)))
+    (should-not (string-match-p "More context" (buffer-string)))))
+
 (provide 'furball-tests)
 ;;; furball-tests.el ends here
