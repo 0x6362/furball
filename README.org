@@ -1,0 +1,163 @@
+#+title: Furball
+
+Furball browses Datadog monitors and logs in Emacs. Its landing page takes
+inspiration from [[https://github.com/wandersoncferreira/agent-shell-dashboard][agent-shell-dashboard]]: compact saved-view sections, status badges,
+keyboard navigation, and drill-down buffers.
+
+* Setup
+
+Requires Emacs 29.1 or later and [[https://github.com/DataDog/pup][Datadog Pup]]. Install Pup using its
+Homebrew tap:
+
+#+begin_src sh
+brew tap datadog-labs/pack
+brew install datadog-labs/pack/pup
+#+end_src
+
+Authenticate through Pup, for example with browser-based OAuth:
+
+#+begin_src sh
+DD_SITE=us5.datadoghq.com pup auth login
+#+end_src
+
+Pup also supports =DD_API_KEY= and =DD_APP_KEY= in its environment. When
+using those credentials, make them available in Emacs's environment.
+Pup owns authentication and credential storage; Furball passes the selected
+site as =DD_SITE= to each child process. See [[https://github.com/DataDog/pup#authentication][Pup authentication]] for details.
+
+Add this checkout to =load-path= and load Furball:
+
+#+begin_src emacs-lisp
+(add-to-list 'load-path "/path/to/furball")
+(require 'furball)
+(setq furball-site "us5.datadoghq.com")
+#+end_src
+
+Pup must be on Emacs's =exec-path=, or set =furball-pup-command= to its
+absolute executable path. =DD_SITE= supplies Furball's initial default site.
+=furball-pup-timeout= limits each request to 60 seconds by default.
+
+Access requires =monitors_read= and =logs_read_data= permissions
+and access to the data being queried. See Datadog's [[https://docs.datadoghq.com/api/latest/monitors/monitors-search/][monitor search]] and
+[[https://docs.datadoghq.com/api/latest/logs/search-logs/][log search]] documentation. Furball only reads Datadog data, including when
+it uses the log-search POST endpoint.
+
+* Saved landing views
+
+=M-x furball= opens the ordered views in =furball-landing-page=. Customize
+that variable or set it using alists:
+
+#+begin_src emacs-lisp
+(setq furball-landing-page
+      '(((:name . "Sidekick monitors")
+         (:kind . monitors)
+         (:query . "tag:\"component:sidekick\""))
+        ((:name . "Sidekick task failures")
+         (:kind . logs)
+         (:query . "service:prosite-celery-titan-messaging \"Sidekick task failed\" env:prod")
+         (:time-range . "1h"))))
+#+end_src
+
+Each view has =:name=, =:kind= (=monitors= or =logs=), and =:query=.
+Optional =:site= overrides the configured site. Log views accept
+=:time-range=, such as =15m=, =1h=, or =2d=; the default is one hour.
+Editing a running view does not modify its saved customization.
+
+* Browse and investigate
+
+| Key | Action |
+|-----+--------|
+| =RET= / =o= | Open selected view, monitor, group logs, or full log record |
+| =n= / =TAB= | Next selectable row |
+| =p= / =S-TAB= | Previous selectable row |
+| =e= | Edit the current query in a separate buffer |
+| =g= | Refresh |
+| =m= | Fetch the next page |
+| =s= | Filter a monitor list by status |
+| =t= | Set a log view's relative time window |
+| =l= | Start a log search |
+| =u= | Import a Datadog logs URL |
+| =b= | Open the current view in Datadog |
+| =^= | Return to the landing page |
+| =q= | Quit the window |
+
+From the landing page, select an /Open/ row to edit that saved view's query.
+In the query buffer, =C-c C-c= runs the query, =M-TAB= completes at point,
+and =C-c C-k= returns. Retrieved log buffers and full log records are
+read-only. Completion offers built-in syntax, observed nested custom fields
+and values, and quoted monitor tag values. It does not fetch Datadog's
+complete facet catalog.
+
+=RET= or =o= on a log row opens a read-only detail buffer with the full
+message, multiline =error.stack= (nested or flat) and =exc_info= tracebacks,
+and raw JSON below. Identical traces appear once; lines wrap and Furball
+does not truncate them. If no separate traceback was returned, the buffer
+says so and shows the message. This displays retrieved fields only; it
+cannot recover server-side truncation. =q= closes the view, including in
+Evil normal and motion states.
+
+When Evil is available, Furball loads its optional Evil integration
+without changing the ordinary Emacs bindings. Results start in normal
+state, with application commands available in normal and motion states;
+=j= and =k= move between selectable rows. Query buffers start in insert
+state. =C-c C-c= and =C-c C-k= work in normal, insert, and visual states.
+
+Open an ALERT or WARN monitor, then select a group to show matching logs
+alongside its current configuration. Automatic drill-down supports count log
+monitors. It adds the selected group's tags to the search, preserving =@=
+attribute prefixes from the expression's grouping. The best-effort window
+uses the group's last recorded trigger; WARN groups use the current time
+because the exact warning transition is unavailable. The current monitor
+evaluation delay is subtracted before deriving the window.
+The search uses the current monitor configuration, so these are matching
+logs, not a reconstruction of historical evaluation evidence.
+The notification template appears in a read-only Org-style Markdown source
+block, preserving Datadog placeholders; it is not rendered as rich Markdown.
+
+=M-x furball-logs= also accepts a count monitor expression:
+
+#+begin_example
+logs("service:prosite-celery-titan-messaging \"Sidekick task failed\" env:prod").index("*").rollup("count").by("env,@error.kind").last("1h") > 1
+#+end_example
+
+Furball extracts the search, indexes, and window and displays matching log
+records. It retains the grouping and threshold as context; it does not
+compute grouped aggregates or evaluate the alert condition. Other rollups
+and monitor expression forms are not supported.
+
+=M-x furball-open-url= imports HTTPS Datadog =/logs?= links with valid
+=from_ts= and =to_ts= timestamps. It preserves the exact fixed window,
+search, sort order, storage tier, and monitor/event identifiers. A linked
+monitor opens alongside the logs. Datadog visualization and aggregation
+options are not reproduced. Use =t= to explicitly switch to a recent window.
+Pagination keeps the same window; refreshing a relative view advances it.
+Editing an expression's =.last= duration recalculates the start while keeping
+a fixed historical end; =t= switches explicitly to a latest window.
+
+Results show fetch time and errors. Previous results remain available during
+refresh or a failed request; if the query changed, they are labeled as
+belonging to the previous query. Datadog warnings and timeouts mark a result
+as partial. Pup runs asynchronously; process failures, invalid JSON, and
+request timeouts appear as fetch errors. Timeout cancellation terminates
+the request process and retains existing results.
+
+* Development
+
+Tests cover query and buffer behavior with mocked responses, and exercise
+the asynchronous transport with local subprocess fixtures. They require no
+live credentials and do not establish live Datadog connectivity.
+With an Emacs server running, load and run the tests using =emacsclient=:
+
+#+begin_src sh
+emacsclient --eval '(progn (add-to-list (quote load-path) "/path/to/furball") (load "/path/to/furball/tests/furball-tests.el") (ert-run-tests-interactively "^furball-"))'
+#+end_src
+
+If Evil is installed and available on =load-path=, also load
+=tests/furball-evil-tests.el= before running the same ERT selector:
+
+#+begin_src sh
+emacsclient --eval '(load "/path/to/furball/tests/furball-evil-tests.el")'
+#+end_src
+
+Inspect the ERT results buffer in Emacs. Do not use
+=ert-run-tests-batch-and-exit= against the shared server.
