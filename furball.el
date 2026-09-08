@@ -13,7 +13,6 @@
 ;;; Code:
 
 (require 'browse-url)
-(require 'compile)
 (require 'org-faces)
 (require 'furball-api)
 
@@ -411,6 +410,25 @@ Completion at point uses syntax and values observed in the source view."
                      (cons key expanded)))))
       (furball--render))))
 
+(defun furball--highlight-traceback (text)
+  "Return TEXT with compilation faces, without compilation navigation properties."
+  (require 'compile)
+  (with-temp-buffer
+    (insert text)
+    (delay-mode-hooks (compilation-mode))
+    (furball--configure-traceback-parser)
+    (font-lock-ensure)
+    (compilation--ensure-parse (point-max))
+    (let ((result (buffer-substring-no-properties (point-min) (point-max)))
+          (at (point-min)))
+      (while (< at (point-max))
+        (let ((end (next-property-change at nil (point-max)))
+              (face (or (get-text-property at 'face)
+                        (get-text-property at 'font-lock-face))))
+          (when face (put-text-property (1- at) (1- end) 'face face result))
+          (setq at end)))
+      result)))
+
 (defun furball--log-level-face (status)
   "Return the summary face for log STATUS."
   (pcase (downcase (or status ""))
@@ -437,11 +455,11 @@ Completion at point uses syntax and values observed in the source view."
      key 'log log)
     (when expanded
       (insert (propertize "    Message\n" 'face 'furball-heading))
-      (insert (or (map-elt attrs 'message) "") "\n")
+      (insert (furball--highlight-traceback (or (map-elt attrs 'message) "")) "\n")
       (dolist (trace (furball--log-tracebacks log))
         (insert (propertize (format "    Traceback · %s\n" (car trace))
                             'face 'furball-heading))
-        (insert (cdr trace) "\n")))
+        (insert (furball--highlight-traceback (cdr trace)) "\n")))
     (add-text-properties start (point)
                          (list 'furball-key key 'furball-action 'log 'furball-value log))
     (when view (put-text-property start (point) 'furball-view view))))
@@ -570,10 +588,11 @@ Preserve Datadog variables and conditional markup verbatim."
     (insert "\n")))
 
 (defun furball--configure-traceback-parser ()
-  "Recognize Python exception-group frames alongside built-in formats."
-  (setq-local compilation-error-regexp-alist
-              (cons '("^[ \t]*[|+][ \t|+]*File \"\\([^\"\n]+\\)\", line \\([0-9]+\\)" 1 2)
-                    compilation-error-regexp-alist)))
+  "Add Python exception-group frames to this buffer's compilation formats."
+  (require 'compile)
+  (let ((rule '("^[ \t]*[|+][ \t|+]*File \"\\([^\"\n]+\\)\", line \\([0-9]+\\)" 1 2)))
+    (setq-local compilation-error-regexp-alist
+                (cons rule (remove rule compilation-error-regexp-alist)))))
 
 (defun furball-open-traceback ()
   "Open the current log traceback with compilation navigation in this window."
