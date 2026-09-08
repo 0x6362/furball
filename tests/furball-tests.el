@@ -462,5 +462,65 @@
       (should (text-property-not-all (point-min) (point-max) 'font-lock-face nil))
       (should (equal original (buffer-substring-no-properties (point-min) (point-max)))))))
 
+(ert-deftest furball-inline-compilation-highlighting-preserves-text-and-bindings ()
+  (let* ((text "  File \"/app/worker.py\", line 12, in run\n    raise ValueError()\n")
+         (highlighted (furball--highlight-traceback text)))
+    (should (equal (substring-no-properties highlighted) text))
+    (should (text-property-not-all 0 (length highlighted) 'face nil highlighted))
+    (dolist (property '(keymap local-map compilation-message mouse-face))
+      (should-not (text-property-not-all 0 (length highlighted) property nil highlighted)))
+    (with-temp-buffer
+      (furball-mode)
+      (let ((inhibit-read-only t)) (insert highlighted))
+      (goto-char (point-min))
+      (should (eq (key-binding (kbd "TAB")) #'furball-toggle-log-preview))
+      (should (eq (key-binding (kbd "RET")) #'furball-open-at-point))
+      (should buffer-read-only))))
+
+(ert-deftest furball-inline-highlights-exception-groups-without-user-configuration ()
+  (let* ((compilation-error-regexp-alist '(python-tracebacks-and-caml))
+         (text "  + Exception Group Traceback (most recent call last):\n  |   File \"/app/worker.py\", line 12, in run\n")
+         (highlighted (furball--highlight-traceback text)))
+    (should (equal (substring-no-properties highlighted) text))
+    (should (text-property-not-all 0 (length highlighted) 'face nil highlighted))
+    (with-temp-buffer
+      (furball-mode)
+      (setq furball--state
+            `((:view . ((:kind . logs)))
+              (:rows . (((id . "group") (attributes . ((attributes . ((error.stack . ,text))))))))))
+      (furball--render)
+      (goto-char (point-min))
+      (furball-next-item)
+      (furball-toggle-log-preview)
+      (search-forward "/app/worker.py")
+      (should (get-text-property (1- (point)) 'face))
+      (should (eq (get-text-property (point) 'furball-action) 'log)))))
+
+(ert-deftest furball-open-traceback-highlights-groups-without-user-config ()
+  (save-window-excursion
+    (with-temp-buffer
+      (switch-to-buffer (current-buffer))
+      (furball-mode)
+      (let ((compilation-error-regexp-alist '(python-tracebacks-and-caml))
+            (text "  |   File \"/tmp/worker.py\", line 12, in run\n")
+            traceback)
+        (setq furball--state
+              `((:view . ((:kind . logs)))
+                (:rows . (((id . "group") (attributes . ((attributes . ((error.stack . ,text))))))))))
+        (furball--render)
+        (goto-char (point-min))
+        (furball-next-item)
+        (unwind-protect
+            (progn
+              (furball-open-traceback)
+              (setq traceback (current-buffer))
+              (font-lock-ensure)
+              (compilation--ensure-parse (point-max))
+              (should (= compilation-num-errors-found 1))
+              (should (text-property-not-all (point-min) (point-max) 'font-lock-face nil))
+              (should (equal (concat text "\n")
+                             (buffer-substring-no-properties (point-min) (point-max)))))
+          (when (buffer-live-p traceback) (kill-buffer traceback)))))))
+
 (provide 'furball-tests)
 ;;; furball-tests.el ends here
