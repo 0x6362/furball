@@ -1,5 +1,7 @@
 ;;; furball.el --- A dashboard for Datadog monitors and logs -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 Cate B.
+
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;; URL: https://github.com/0x6362/furball

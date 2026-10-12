@@ -1,5 +1,7 @@
 ;;; furball-query.el --- Datadog query data -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2026 Cate B.
+
 ;; SPDX-License-Identifier: GPL-3.0-or-later
 
 ;;; Commentary:
