@@ -1,0 +1,265 @@
+* Before Contributing
+
+When submitting a PR, please keep the checkboxes from the [[https://github.com/0x6362/furball/blob/main/.github/PULL_REQUEST_TEMPLATE.md][PR template]] and check them off as applicable.
+
+Before implementing new features, please *file a feature request first* to discuss the proposal. This helps ensure alignment with the project's direction and prevents unnecessary work.
+
+As the maintainer, I must be mindful of all features I accept since I inherit the code to maintain it. Some features may be better suited as separate packages.
+
+* Style (or personal preference TBH)
+
+There are lots of ways to accomplish things in elisp. While the following are merely personal preferences, as maintainer, it really simplifies things for me to try to limit the number of ways to accomplish things.
+
+** Maps (use alists)
+
+This project relies on [[https://www.gnu.org/software/emacs/manual/html_node/elisp/Association-Lists.html][alists]] for much of its functionality. Sure, we can also use plists, hashtables, etc.
+
+Unless we have a strong argument to use something else, please stick with =alists= (and =:= keywords).
+
+#+begin_src emacs-lisp
+  '((:name . "Needs attention")
+    (:kind . monitors)
+    (:query . "status:(Alert OR Warn)")
+    (:site . "us5.datadoghq.com")
+    (:time-range . "1h"))
+#+end_src
+
+** seq.el
+
+Accessing and working with lists? Please prefer =seq.el=, unless we have a strong argument to use an alternative.
+
+#+begin_src emacs-lisp :lexical no
+  (setq views
+        (list
+         '((:name . "Needs attention")
+           (:kind . monitors)
+           (:query . "status:(Alert OR Warn)"))
+         '((:name . "Failures")
+           (:kind . logs)
+           (:query . "env:prod status:error"))))
+
+  (seq-first views)
+#+end_src
+
+** map.el
+
+Accessing and working with =alists=? Please prefer =map.el= unless we have a strong argument to use an alternative.
+
+#+begin_src emacs-lisp :lexical no
+  (setq view (seq-first views))
+  (map-elt view :kind)
+#+end_src
+
+** Prefer =map-nested-elt= over nested =map-elt=
+
+When accessing nested alist values, use =map-nested-elt= instead of nesting =map-elt= calls.
+
+#+begin_src emacs-lisp :lexical no
+  ;; Avoid
+  (map-elt (map-elt log 'attributes) 'message)
+
+  ;; Prefer
+  (map-nested-elt log '(attributes message))
+#+end_src
+
+** cl-lib (limited to =cl-defun=)
+
+While I'm a fan of =cl-defun=, please limit =cl= usage to =cl-defun= if possible. Nothing against =cl-lib=. I'm just limiting the surface and number of idioms I need to keep in my head to maintain the codebase. Often, =seq.el= and =map.el= can do the job just fine.
+
+=cl-defun=, on the other hand, please do! I'm a fan of named parameters (yay for self-documenting), so use =&key= if possible.
+
+#+begin_src emacs-lisp :lexical no
+  (cl-defun describe (&key view)
+    "Describe a VIEW, which is an alist of properties like :name, :kind, :query."
+    (message "%s searches %s for %s."
+             (map-elt view :name "Unnamed")
+             (map-elt view :kind "unknown")
+             (map-elt view :query "*")))
+
+  (describe :view '((:name . "Failures")
+                    (:kind . logs)
+                    (:query . "env:prod status:error")))
+#+end_src
+
+** Flatten =when/if/let= blocks
+
+Overall, try to flatten things. Look out for unnecessarily nested blocks and flatten if possible. LLMs are specially generous nesting blocks. Please look out for these instances and flatten if possible. For example, prefer =when-let*= over nested =let= + =when= to reduce indentation and improve readability.
+
+#+begin_src emacs-lisp :lexical no
+  ;; Avoid
+  (let ((buffer (get-buffer name)))
+    (when buffer
+      (with-current-buffer buffer
+        (erase-buffer)
+        (insert content))
+      buffer))
+
+  ;; Prefer (flatten let + when into when-let*)
+  (when-let* ((buffer (get-buffer name)))
+    (with-current-buffer buffer
+      (erase-buffer)
+      (insert content))
+    buffer)
+#+end_src
+
+Similarly, flatten =when-let*= + nested =when= by using boolean guard clauses as bindings in =when-let*=.
+
+#+begin_src emacs-lisp :lexical no
+  ;; Avoid
+  (when-let* ((filename (file-name-nondirectory filepath)))
+    (when (not (string-empty-p filename))
+      (do-something filename)))
+
+  ;; Prefer (use boolean binding as guard clause)
+  (when-let* ((filename (file-name-nondirectory filepath))
+              ((not (string-empty-p filename))))
+    (do-something filename))
+#+end_src
+
+** Prefer =let= over =let*=
+
+Only use =let*= when bindings depend on each other. LLMs tend to default to =let*= even when there are no dependencies between bindings.
+
+For conditional bindings, use =when-let*=. The non-star =when-let= is obsolete as of Emacs 31.1.
+
+** Avoid unnecessary =let=/local variables
+
+Prefer inlining single-use expressions rather than binding them to intermediate =let=, unless the offer significant readability improvements. LLM models tend to introduce unnecessary local variables for something like =map-elt= (the equivalent of saving =foo.someField= to a local var in other languages).
+
+#+begin_src emacs-lisp :lexical no
+  ;; Avoid
+  (let* ((attributes (map-elt log 'attributes))
+         (message (map-elt attributes 'message)))
+    (do-something message))
+
+  ;; Prefer
+  (do-something (map-nested-elt log '(attributes message)))
+#+end_src
+
+** Move substantial functionality to separate files
+
+=furball.el= owns the result buffers and commands. Pure data transformations live in =furball-query.el=, the Pup transport in =furball-api.el=, menus in =furball-transient.el=, and Evil bindings in =furball-evil.el=. When adding substantial new functionality, put helper functions in the matching file, or a new dedicated one, keeping the =furball--= prefix.
+
+** Use =:kebab-case= keywords for internal state
+
+Use =:kebab-case= keyword symbols for internal state keys. Reserve plain symbols for keys that arrive in Datadog API responses. This makes it easy to spot what's part of the API payload vs internal data.
+
+#+begin_src emacs-lisp :lexical no
+  ;; Internal state — :kebab-case
+  (map-elt view :time-range)
+
+  ;; Datadog API payload — symbols as decoded from JSON
+  (map-nested-elt log '(attributes status))
+#+end_src
+
+** Avoid premature customization
+
+Don't add =defcustom= for new features right away. Start with opinionated defaults and let the feature settle before opening it up for customization. Every =defcustom= becomes public API to maintain.
+
+** Keep buffer state in =furball--state=
+
+Per-buffer state is a single alist in =furball--state=, updated immutably through =furball--set-state=. When adding a state field, document it in the =furball--state= docstring so we keep an overall picture of all values available in state.
+
+** Hook/event functions receive a single alist parameter
+
+When defining hook functions or callbacks, prefer a single alist/event parameter over multiple positional parameters or =cl-defun= with keys. This makes supporting new features easier while keeping backwards compatibility manageable.
+
+** No LLM-generated comments or emojis
+
+Remove comments obviously by an LLM (e.g. referencing "previous code" or restating the obvious). Avoid emojis in code and output strings.
+
+** Keep PRs small and focused
+
+Prefer smaller PRs whenever possible. They're easier to review and less likely to introduce issues. If a change can be split into independent steps, submit them as separate PRs.
+
+Don't include unrelated changes (whitespace, indentation, formatting) in your PR. If you'd like to do a cleanup, please submit it as a separate PR.
+
+** Code/feature consistency
+
+Please try to look for a similar feature in the code base and replicate an existing pattern usage if possible.
+
+** Include examples in docstrings
+
+When writing docstrings, include concrete input/output examples so readers can understand the function without reading the implementation. This is specially useful for inputs that are converted into some output.
+
+** Prefer =when=/=unless= over single-branch =if=
+
+Use =when= or =unless= instead of =if= when there's only one branch.
+
+#+begin_src emacs-lisp :lexical no
+  ;; Avoid
+  (if (not (file-exists-p path))
+      (user-error "File not found: %s" path))
+
+  ;; Prefer
+  (unless (file-exists-p path)
+    (user-error "File not found: %s" path))
+#+end_src
+
+** Use multi-line strings for readability
+
+When constructing longer strings, prefer multi-line format strings over single-line concatenation.
+
+#+begin_src emacs-lisp :lexical no
+  ;; Avoid
+  (format "Name: %s\nKind: %s\nQuery: %s" name kind query)
+
+  ;; Prefer
+  (format "Name: %s
+Kind: %s
+Query: %s" name kind query)
+#+end_src
+
+** Code Checks
+
+Before submitting a PR, please run:
+
+- =make format= - Reindents sources the way Emacs would
+- =make lint= - Runs byte-compile, checkdoc, package-lint, and indentation checks
+
+Both run a standalone batch Emacs and install their dependencies into =.sandbox=. The =pre-commit= hook runs =make lint= automatically once =core.hooksPath= is set (see below). Inside Emacs, =M-x checkdoc= and =M-x byte-compile-file= cover the same ground interactively.
+
+** Commit messages
+
+Commits follow Conventional Commits, enforced by the =commit-msg= hook in =.githooks=. Enable the hooks after cloning:
+
+#+begin_src bash
+  git config --local core.hooksPath .githooks
+#+end_src
+
+See the README for accepted types.
+
+** Personally review your own code
+
+If you're using LLM-assisted tools to write code, personally review the code yourself before submitting a PR. Make sure you understand the code and are in a position to explain what it does, how it does it, and you will personally vouch for its quality.
+
+** Tests
+
+Tests document behavior: focus on expected inputs and outputs, and treat the interior as a black box. If adding a new feature, please add tests.
+
+Tests live under the tests directory:
+
+#+begin_src bash
+  ls tests/*tests.el
+#+end_src
+
+#+RESULTS:
+| tests/furball-evil-tests.el      |
+| tests/furball-tests.el           |
+| tests/furball-transient-tests.el |
+
+** Running tests
+
+With an Emacs server running, load the test files and run them with =emacsclient=:
+
+#+begin_src bash
+  emacsclient --eval '(progn (add-to-list (quote load-path) "/path/to/furball") (load "/path/to/furball/tests/furball-tests.el") (load "/path/to/furball/tests/furball-transient-tests.el") (ert-run-tests-interactively "^furball-"))'
+#+end_src
+
+If Evil is installed, also load =tests/furball-evil-tests.el= before running the same selector. Inspect the ERT results buffer in Emacs. Do not use =ert-run-tests-batch-and-exit= against the shared server.
+
+* License
+
+Furball is free software distributed under the GNU General Public License, version 3 or (at your option) any later version. See [[file:COPYING][COPYING]]. By contributing, you agree that your contributions are licensed under the same terms.
+
+This guide is adapted from the [[https://github.com/xenodium/agent-shell/blob/main/CONTRIBUTING.org][agent-shell contributing guide]] by Alvaro Ramirez, also GPL-3.0-or-later.

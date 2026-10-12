@@ -1,4 +1,4 @@
-# Agent Shell - Project Guidelines
+# furball - Project Guidelines
 
 ## Communication norms
 
