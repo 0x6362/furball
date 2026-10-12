@@ -413,6 +413,12 @@ Completion at point uses syntax and values observed in the source view."
                      (cons key expanded)))))
       (furball--render))))
 
+(defun furball--configure-traceback-parser ()
+  "Add Python exception-group frames to this buffer's compilation formats."
+  (let ((rule '("^[ \t]*[|+][ \t|+]*File \"\\([^\"\n]+\\)\", line \\([0-9]+\\)" 1 2)))
+    (setq-local compilation-error-regexp-alist
+                (cons rule (remove rule compilation-error-regexp-alist)))))
+
 (defun furball--highlight-traceback (text)
   "Return TEXT with compilation faces, without compilation navigation properties."
   (with-temp-buffer
@@ -588,12 +594,6 @@ Preserve Datadog variables and conditional markup verbatim."
           (json-false :false))
       (insert (json-encode log)))
     (insert "\n")))
-
-(defun furball--configure-traceback-parser ()
-  "Add Python exception-group frames to this buffer's compilation formats."
-  (let ((rule '("^[ \t]*[|+][ \t|+]*File \"\\([^\"\n]+\\)\", line \\([0-9]+\\)" 1 2)))
-    (setq-local compilation-error-regexp-alist
-                (cons rule (remove rule compilation-error-regexp-alist)))))
 
 (defun furball-open-traceback ()
   "Open the current log traceback with compilation navigation in this window."
