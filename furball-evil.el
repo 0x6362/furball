@@ -17,7 +17,7 @@
 (defvar furball--query-bindings)
 
 (declare-function furball-menu "furball-transient")
-(declare-function furball-log-functions-menu "furball-transient")
+(declare-function furball-log-functions-menu "furball-transient" () t)
 (declare-function furball-open-traceback "furball")
 (declare-function furball-query-run "furball")
 (declare-function furball-next-item "furball")

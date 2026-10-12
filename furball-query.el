@@ -41,7 +41,7 @@ For example, updating ((:name . \"Old\")) with ((:name . \"New\")) replaces name
               (match-string 2 text))))
 
 (defconst furball--quoted-string
-  (rx "\"" (* (or (not (any "\"" "\\")) (seq "\\" anything))) "\"")
+  (rx "\"" (* (or (not (in "\"" "\\")) (seq "\\" anything))) "\"")
   "A JSON-compatible quoted string in a log monitor expression.")
 
 (defun furball--parse-query (input)

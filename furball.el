@@ -1,6 +1,8 @@
 ;;; furball.el --- A dashboard for Datadog monitors and logs -*- lexical-binding: t; -*-
 
 ;; SPDX-License-Identifier: GPL-3.0-or-later
+
+;; URL: https://github.com/0x6362/furball
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "29.1") (transient "0.7.0"))
 ;; Keywords: tools
@@ -13,6 +15,7 @@
 ;;; Code:
 
 (require 'browse-url)
+(require 'compile)
 (require 'org-faces)
 (require 'furball-api)
 
@@ -412,7 +415,6 @@ Completion at point uses syntax and values observed in the source view."
 
 (defun furball--highlight-traceback (text)
   "Return TEXT with compilation faces, without compilation navigation properties."
-  (require 'compile)
   (with-temp-buffer
     (insert text)
     (delay-mode-hooks (compilation-mode))
@@ -589,7 +591,6 @@ Preserve Datadog variables and conditional markup verbatim."
 
 (defun furball--configure-traceback-parser ()
   "Add Python exception-group frames to this buffer's compilation formats."
-  (require 'compile)
   (let ((rule '("^[ \t]*[|+][ \t|+]*File \"\\([^\"\n]+\\)\", line \\([0-9]+\\)" 1 2)))
     (setq-local compilation-error-regexp-alist
                 (cons rule (remove rule compilation-error-regexp-alist)))))
