@@ -29,10 +29,10 @@ base directory.
 Example: (((:name . \"Sidekick\") (:kind . monitors)
            (:query . \"tag:\\\"component:sidekick\\\"\")))."
   :type '(repeat (alist :key-type (choice (const :name) (const :kind)
-                                         (const :query) (const :site)
-                                         (const :time-range) (const :log-view-functions)
-                                         (const :directory-abbrev-alist)
-                                         (const :project-directory-id-fn))
+                                          (const :query) (const :site)
+                                          (const :time-range) (const :log-view-functions)
+                                          (const :directory-abbrev-alist)
+                                          (const :project-directory-id-fn))
                         :value-type (choice string (const monitors) (const logs)
                                             (repeat function) function
                                             (alist :key-type regexp :value-type directory))))
@@ -77,16 +77,16 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
 
 (defconst furball--result-bindings
   '(("g" . furball-refresh) ("e" . furball-edit-query)
-                       ("RET" . furball-open-at-point) ("o" . furball-open-at-point)
-                       ("n" . furball-next-item) ("p" . furball-previous-item)
-                       ("TAB" . furball-toggle-log-preview) ("<tab>" . furball-toggle-log-preview) ("<backtab>" . furball-previous-item)
-                       ("m" . furball-more) ("l" . furball-search-menu)
-                       ("L" . furball-search-menu) ("v" . furball-saved-views-menu)
-                       ("x" . furball-log-functions-menu) ("c" . furball-open-traceback)
-                       ("Q" . quit-window)
-                       ("u" . furball-url-menu) ("b" . furball-browse)
-                       ("t" . furball-time-menu) ("s" . furball-status-menu)
-                       ("^" . furball) ("q" . quit-window) ("?" . furball-menu))
+    ("RET" . furball-open-at-point) ("o" . furball-open-at-point)
+    ("n" . furball-next-item) ("p" . furball-previous-item)
+    ("TAB" . furball-toggle-log-preview) ("<tab>" . furball-toggle-log-preview) ("<backtab>" . furball-previous-item)
+    ("m" . furball-more) ("l" . furball-search-menu)
+    ("L" . furball-search-menu) ("v" . furball-saved-views-menu)
+    ("x" . furball-log-functions-menu) ("c" . furball-open-traceback)
+    ("Q" . quit-window)
+    ("u" . furball-url-menu) ("b" . furball-browse)
+    ("t" . furball-time-menu) ("s" . furball-status-menu)
+    ("^" . furball) ("q" . quit-window) ("?" . furball-menu))
   "Result-view commands shared by Emacs and Evil keymaps.")
 
 (defvar furball-mode-map
@@ -145,7 +145,7 @@ Completion at point uses syntax and values observed in the source view."
     (unless (stringp (map-elt view :query))
       (user-error "View needs a string :query")))
   (furball--with view `((:site . ,(furball--site
-                                  (or (map-elt view :site) furball-site))))))
+                                   (or (map-elt view :site) furball-site))))))
 
 (defun furball--open-view (view &optional beside)
   "Open VIEW and fetch its first page; display BESIDE when non-nil."
@@ -176,8 +176,8 @@ Completion at point uses syntax and values observed in the source view."
   "Browse logs for QUERY, or prompt for a search or count expression."
   (interactive)
   (furball--open-view `((:name . "Logs") (:kind . logs)
-                       (:query . ,(or query (read-string "Log query: ")))
-                       (:time-range . "1h"))))
+                        (:query . ,(or query (read-string "Log query: ")))
+                        (:time-range . "1h"))))
 
 ;;;###autoload
 (defun furball-open-url (address)
@@ -191,10 +191,10 @@ Completion at point uses syntax and values observed in the source view."
 (defun furball--open-monitor (id site &optional functions context)
   "Open current monitor ID on SITE, carrying log view FUNCTIONS and path CONTEXT."
   (furball--open-view `((:kind . monitor) (:monitor-id . ,id)
-                       (:name . ,(format "Monitor %s" id)) (:site . ,site)
-                       (:log-view-functions . ,functions)
-                       (:directory-abbrev-alist . ,(map-elt context :directory-abbrev-alist))
-                       (:project-directory-id-fn . ,(map-elt context :project-directory-id-fn)))))
+                        (:name . ,(format "Monitor %s" id)) (:site . ,site)
+                        (:log-view-functions . ,functions)
+                        (:directory-abbrev-alist . ,(map-elt context :directory-abbrev-alist))
+                        (:project-directory-id-fn . ,(map-elt context :project-directory-id-fn)))))
 
 (defun furball-refresh ()
   "Refresh the current view, retaining old results until a request succeeds."
@@ -480,7 +480,7 @@ Completion at point uses syntax and values observed in the source view."
     (when (map-elt scope :provenance)
       (insert (format "%s\n" (map-elt scope :provenance)))))
   (furball--heading (format "Logs · %s loaded · RET for details and traceback"
-                           (length (map-elt furball--state :rows))))
+                            (length (map-elt furball--state :rows))))
   (dolist (log (map-elt furball--state :rows)) (furball--log-row log))
   (unless (map-elt furball--state :rows)
     (insert "  No log rows loaded.\n")))
@@ -495,7 +495,7 @@ Preserve Datadog variables and conditional markup verbatim."
     (unless (bolp) (insert "\n"))
     (add-text-properties start (point)
                          '(face org-block font-lock-face org-block
-                           read-only t rear-nonsticky t)))
+                                read-only t rear-nonsticky t)))
   (insert (propertize "#+end_src\n" 'face 'org-block-end-line)))
 
 (defun furball--render-monitor ()
@@ -740,9 +740,9 @@ Preserve Datadog variables and conditional markup verbatim."
                                             (format ".last(\"%s\")" duration) query t t)))
     (furball--set-state
      `((:view . ,(furball--with view `((:time-range . ,duration) (:query . ,query)
-                                      (:from . nil) (:to . nil) (:event-id . nil)
-                                      (:event-ts . nil)
-                                      (:provenance . "Latest window selected explicitly.")))))))
+                                       (:from . nil) (:to . nil) (:event-id . nil)
+                                       (:event-ts . nil)
+                                       (:provenance . "Latest window selected explicitly.")))))))
   (furball-refresh))
 
 (defun furball-status-filter (status)
@@ -754,9 +754,9 @@ Preserve Datadog variables and conditional markup verbatim."
          (base (or (map-elt view :base-query) (map-elt view :query))))
     (furball--set-state
      `((:view . ,(furball--with view
-                               `((:base-query . ,base) (:status-filter . ,status)
-                                 (:query . ,(if (equal status "All") base
-                                              (format "(%s) status:\"%s\"" base status)))))))))
+                                `((:base-query . ,base) (:status-filter . ,status)
+                                  (:query . ,(if (equal status "All") base
+                                               (format "(%s) status:\"%s\"" base status)))))))))
   (furball-refresh))
 
 (defun furball--value-completions (key value)
@@ -829,7 +829,7 @@ Preserve Datadog variables and conditional markup verbatim."
   (let* ((view (map-elt furball--state :view))
          (site (map-elt view :site))
          (base (concat "https://" (if (member site '("datadoghq.com" "datadoghq.eu" "ddog-gov.com"))
-                                       "app." "") site)))
+                                      "app." "") site)))
     (pcase (map-elt view :kind)
       ('logs
        (let ((scope (or (map-elt furball--state :scope) (furball--log-scope view))))

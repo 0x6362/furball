@@ -36,10 +36,10 @@ A saved view or imported URL can override this site."
    ((not (and (eq (process-status process) 'exit)
               (= (process-exit-status process) 0)))
     `((:error . ,(format "Pup exited %s: %s"
-                        (process-exit-status process)
-                        (with-current-buffer (process-get process 'furball-stderr)
-                          (string-trim (buffer-substring-no-properties
-                                        (point-min) (min (point-max) 2001))))))))
+                         (process-exit-status process)
+                         (with-current-buffer (process-get process 'furball-stderr)
+                           (string-trim (buffer-substring-no-properties
+                                         (point-min) (min (point-max) 2001))))))))
    (t
     (condition-case err
         (with-current-buffer (process-buffer process)
@@ -80,7 +80,7 @@ Return the asynchronous process, or nil when startup fails."
                 (make-process
                  :name "furball-pup" :buffer stdout :stderr stderr
                  :command (append (list furball-pup-command "--no-agent" "--output" "json"
-                                         "api" path "--method" method)
+                                        "api" path "--method" method)
                                   (when body '("--input" "-")))
                  :connection-type 'pipe :coding 'utf-8-unix :noquery t
                  :sentinel #'furball--pup-finish))
@@ -122,7 +122,7 @@ LIMIT defaults to 100; landing page previews use a smaller limit."
   (let ((site (or (map-elt view :site) furball-site)))
     (pcase (map-elt view :kind)
       ('logs (furball--request site "POST" "/api/v2/logs/events/search"
-                              (furball--logs-body scope cursor limit) callback))
+                               (furball--logs-body scope cursor limit) callback))
       ('monitors
        (furball--request
         site "GET"

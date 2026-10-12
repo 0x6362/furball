@@ -235,6 +235,20 @@ emacsclient --eval '(load "/path/to/furball/tests/furball-evil-tests.el")'
 Inspect the ERT results buffer in Emacs. Do not use
 =ert-run-tests-batch-and-exit= against the shared server.
 
+A Makefile wraps the same checks in a standalone batch Emacs, installing
+=elisp-lint= and its dependencies into a local =.sandbox= directory on
+first use:
+
+#+begin_src sh
+make format   # reindent sources and tests in place
+make lint     # byte-compile, checkdoc, package-lint, indentation, whitespace
+make test     # run the ERT suite
+make check    # lint and test
+#+end_src
+
+The =pre-commit= hook in =.githooks= runs =make lint= whenever staged
+changes include Emacs Lisp files.
+
 * Commit messages
 
 Enable the repository's Conventional Commits hook after cloning:

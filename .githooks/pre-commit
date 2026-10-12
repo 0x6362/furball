@@ -1,0 +1,7 @@
+#!/bin/sh
+# Lint Emacs Lisp sources before Git records a commit.
+set -eu
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.el$'; then
+  make -C "$repo" lint
+fi

@@ -173,7 +173,7 @@
 
 (ert-deftest furball-landing-page-is-ordered-and-read-only ()
   (let ((furball-landing-page '(((:name . "Sidekick") (:kind . monitors) (:query . "tag:\"component:sidekick\""))
-                               ((:name . "Failures") (:kind . logs) (:query . "env:prod"))))
+                                ((:name . "Failures") (:kind . logs) (:query . "env:prod"))))
         paths)
     (cl-letf (((symbol-function 'furball--request)
                (lambda (_site _method path _body callback)
@@ -359,7 +359,7 @@
   (dolist (fields '(((exc_info . "Traceback\nValueError"))
                     ((error.stack . "Traceback\nValueError"))))
     (should (equal (cdar (furball--log-tracebacks
-                         `((attributes . ((attributes . ,fields))))))
+                          `((attributes . ((attributes . ,fields))))))
                    "Traceback\nValueError"))))
 
 (ert-deftest furball-log-without-stack-keeps-full-message ()

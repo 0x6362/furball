@@ -79,7 +79,7 @@
                                             (format ".last(\"%s\")" window) query t t)))
     (furball--duration window)
     (furball--open-view `((:kind . logs) (:name . "Logs") (:query . ,query)
-                         (:time-range . ,window) (:site . ,(furball--site site))))))
+                          (:time-range . ,window) (:site . ,(furball--site site))))))
 
 (defun furball-transient-open-saved ()
   "Open the saved view selected in the saved-views menu."
@@ -118,11 +118,11 @@
     (transient-setup
      'furball-search-menu nil nil
      :value (list (concat "--query=" (if (eq (map-elt view :kind) 'logs)
-                                           (map-elt view :query) "*"))
+                                         (map-elt view :query) "*"))
                   (concat "--window=" (or (and (eq (map-elt view :kind) 'logs)
-                                              (map-elt (furball--parse-query
-                                                        (map-elt view :query)) :time-range))
-                                         (map-elt view :time-range) "1h"))
+                                               (map-elt (furball--parse-query
+                                                         (map-elt view :query)) :time-range))
+                                          (map-elt view :time-range) "1h"))
                   (concat "--site=" (or (map-elt view :site) furball-site))))))
 
 (transient-define-prefix furball-saved-views-menu ()
@@ -205,7 +205,7 @@
 (defun furball--log-function-children (_children)
   "Build Transient children from the current view instead of _CHILDREN."
   (transient-parse-suffixes 'furball-log-functions-menu
-                          (furball--log-function-suffixes)))
+                            (furball--log-function-suffixes)))
 
 (transient-define-prefix furball-log-functions-menu ()
   "Invoke a configured function with the current Furball buffer."

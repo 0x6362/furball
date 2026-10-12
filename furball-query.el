@@ -91,8 +91,8 @@ For a relative 1h view, paging reuses the resulting absolute timestamps."
      (furball--with view parsed)
      `((:from . ,start) (:to . ,end)
        (:query . ,(if-let* ((group (map-elt view :group-filter)))
-                     (format "(%s) AND %s" (map-elt parsed :query) group)
-                   (map-elt parsed :query)))))))
+                      (format "(%s) AND %s" (map-elt parsed :query) group)
+                    (map-elt parsed :query)))))))
 
 (defun furball--url-view (address)
   "Convert a Datadog logs ADDRESS to a view with exact timestamps.

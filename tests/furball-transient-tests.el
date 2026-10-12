@@ -40,7 +40,7 @@
 
 (ert-deftest furball-transient-saved-views-disambiguate-names ()
   (let* ((furball-landing-page '(((:name . "Same") (:kind . logs) (:query . "env:prod"))
-                                ((:name . "Same") (:kind . monitors) (:query . "tag:prod"))))
+                                 ((:name . "Same") (:kind . monitors) (:query . "tag:prod"))))
          (original (copy-tree furball-landing-page))
          opened)
     (cl-letf (((symbol-function 'transient-args) (lambda (_) '("--view=2: Same")))
@@ -54,7 +54,7 @@
   (with-temp-buffer
     (furball-mode)
     (setq furball--state '((:view . ((:kind . logs) (:query . "env:prod")
-                                   (:from . 1000) (:to . 2000)))))
+                                     (:from . 1000) (:to . 2000)))))
     (let ((original (copy-tree furball--state)))
       (cl-letf (((symbol-function 'transient-setup) #'ignore))
         (furball-time-menu))
