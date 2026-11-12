@@ -297,6 +297,10 @@
     (should (equal (map-nested-elt (car outcome) '(:data site)) "us5.datadoghq.com"))
     (should (equal (getenv "DD_SITE") before))))
 
+(ert-deftest furball-pup-runs-when-caller-directory-is-gone ()
+  (let ((default-directory "/nonexistent/furball-deleted-directory/"))
+    (should (assq :data (car (furball-test--pup "printf '{}'"))))))
+
 (ert-deftest furball-pup-stderr-does-not-corrupt-json ()
   (let ((result (car (furball-test--pup "printf 'notice' >&2; printf '{\"data\":[]}'"))))
     (should (assq :data result))

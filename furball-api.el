@@ -69,10 +69,13 @@ A saved view or imported URL can override this site."
 (defun furball--request (site method path body callback)
   "Run Pup for PATH on SITE using METHOD and BODY; deliver CALLBACK.
 Pup owns credentials.  JSON bodies go to stdin and arguments bypass a shell.
-Return the asynchronous process, or nil when startup fails."
+Pup runs locally from the home directory, regardless of the caller's
+`default-directory'.  Return the asynchronous process, or nil when
+startup fails."
   (furball--site site)
   (let ((stdout (generate-new-buffer " *furball-pup-output*"))
         (stderr (generate-new-buffer " *furball-pup-errors*"))
+        (default-directory (expand-file-name "~/"))
         (process-environment (copy-sequence process-environment))
         process failure)
     (setenv "DD_SITE" site)
