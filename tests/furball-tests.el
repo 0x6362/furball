@@ -76,7 +76,7 @@
 (ert-deftest furball-pagination-reuses-window-and-cursor ()
   (let (requests callbacks)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method _path body callback)
+               (lambda (_site _method _path body callback &optional _options)
                  (push body requests) (push callback callbacks))))
       (with-temp-buffer
         (furball-mode)
@@ -110,7 +110,7 @@
                                 ((:name . "Third") (:kind . logs) (:query . "env:dev"))))
         callbacks)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method _path _body callback) (push callback callbacks))))
+               (lambda (_site _method _path _body callback &optional _options) (push callback callbacks))))
       (with-temp-buffer
         (furball-mode)
         (setq furball--state '((:view . ((:kind . dashboard)))))
@@ -130,7 +130,7 @@
 (ert-deftest furball-next-page-appends-without-moving-selection ()
   (let (callbacks)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method _path _body callback) (push callback callbacks))))
+               (lambda (_site _method _path _body callback &optional _options) (push callback callbacks))))
       (with-temp-buffer
         (furball-mode)
         (setq furball--state '((:view . ((:kind . logs) (:name . "Test")
@@ -158,7 +158,7 @@
 (ert-deftest furball-failed-refresh-keeps-rows-and-shows-error ()
   (let (callbacks)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method _path _body callback) (push callback callbacks))))
+               (lambda (_site _method _path _body callback &optional _options) (push callback callbacks))))
       (with-temp-buffer
         (furball-mode)
         (setq furball--state '((:view . ((:kind . logs) (:name . "Test")
@@ -175,7 +175,7 @@
 (ert-deftest furball-out-of-order-responses-do-not-replace-new-results ()
   (let (callbacks)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method _path _body callback) (push callback callbacks))))
+               (lambda (_site _method _path _body callback &optional _options) (push callback callbacks))))
       (with-temp-buffer
         (furball-mode)
         (setq furball--state '((:view . ((:kind . logs) (:query . "old")))))
@@ -191,7 +191,7 @@
 (ert-deftest furball-failed-refresh-retains-and-labels-old-results ()
   (let (callback)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method _path _body cb) (setq callback cb))))
+               (lambda (_site _method _path _body cb &optional _options) (setq callback cb))))
       (with-temp-buffer
         (furball-mode)
         (setq furball--state '((:view . ((:kind . logs) (:query . "old")))))
@@ -212,7 +212,7 @@
          request)
     (unwind-protect
         (cl-letf (((symbol-function 'furball--request)
-                   (lambda (_site _method _path body _callback) (setq request body)))
+                   (lambda (_site _method _path body _callback &optional _options) (setq request body)))
                   ((symbol-function 'pop-to-buffer) (lambda (buffer &rest _) buffer)))
           (with-current-buffer target
             (furball-mode)
@@ -248,12 +248,28 @@
                                 (map-elt (furball--log-scope opened) :query)))
         (should (string-match-p "current monitor configuration" (map-elt opened :provenance)))))))
 
+(defun furball-test--row-text ()
+  "Return the first line of the row at point, without indentation."
+  (string-trim (car (split-string
+                     (buffer-substring-no-properties
+                      (point) (next-single-property-change (point) 'furball-key nil (point-max)))
+                     "  \\[\\|\n"))))
+
+(defun furball-test--visit-rows ()
+  "Move through every row reachable with `furball-next-item', returning their text."
+  (let (rows (previous -1))
+    (while (/= previous (point))
+      (setq previous (point))
+      (furball-next-item)
+      (when (/= previous (point)) (push (furball-test--row-text) rows)))
+    (nreverse rows)))
+
 (ert-deftest furball-landing-page-is-ordered-and-read-only ()
   (let ((furball-landing-page '(((:name . "Sidekick") (:kind . monitors) (:query . "tag:\"component:sidekick\""))
                                 ((:name . "Failures") (:kind . logs) (:query . "env:prod"))))
         paths)
     (cl-letf (((symbol-function 'furball--request)
-               (lambda (_site _method path _body callback)
+               (lambda (_site _method path _body callback &optional _options)
                  (push path paths)
                  (funcall callback '((:data . ((data . nil) (monitors . nil))) (:fetched-at . 100))))))
       (with-temp-buffer
@@ -265,12 +281,73 @@
         (should (< (string-match "Sidekick" (buffer-string))
                    (string-match "Failures" (buffer-string))))
         (goto-char (point-min))
-        (furball-next-item)
-        (should (equal (map-elt (get-text-property (point) 'furball-value) :name) "Sidekick"))
-        (furball-next-item)
-        (should (equal (map-elt (get-text-property (point) 'furball-value) :name) "Failures"))
+        (should (equal (furball-test--visit-rows)
+                       '("Sidekick" "Open Sidekick" "Failures" "Open Failures")))
         (furball-previous-item)
-        (should (equal (map-elt (get-text-property (point) 'furball-value) :name) "Sidekick"))))))
+        (furball-previous-item)
+        (should (equal (furball-test--row-text) "Open Sidekick"))))))
+
+(defconst furball-test--grouped-landing-page
+  '(((:name . "Sidekick monitors") (:group . "Sidekick") (:kind . logs) (:query . "a"))
+    ((:name . "Ungrouped") (:kind . logs) (:query . "b"))
+    ((:name . "Sidekick failures") (:group . "Sidekick") (:kind . logs) (:query . "c"))
+    ((:name . "Tyda logs") (:group . "Tyda") (:kind . logs) (:query . "d"))))
+
+(defmacro furball-test--with-dashboard (landing-page &rest body)
+  "Run BODY in a dashboard for LANDING-PAGE whose previews wait in `callbacks'."
+  (declare (indent 1))
+  `(let ((furball-landing-page ,landing-page) callbacks)
+     (cl-letf (((symbol-function 'furball--request)
+                (lambda (_site _method _path _body callback &optional _options) (push callback callbacks))))
+       (with-temp-buffer
+         (furball-mode)
+         (setq furball--state '((:view . ((:kind . dashboard)))))
+         (furball-refresh)
+         (setq callbacks (nreverse callbacks))
+         (goto-char (point-min))
+         ,@body))))
+
+(ert-deftest furball-dashboard-gathers-groups-at-their-first-view ()
+  (furball-test--with-dashboard furball-test--grouped-landing-page
+                                (should (equal (furball-test--visit-rows)
+                                               '("Sidekick"
+                                                 "Sidekick monitors" "Open Sidekick monitors"
+                                                 "Sidekick failures" "Open Sidekick failures"
+                                                 "Ungrouped" "Open Ungrouped"
+                                                 "Tyda"
+                                                 "Tyda logs" "Open Tyda logs")))))
+
+(ert-deftest furball-folded-group-hides-its-views-and-navigation-skips-them ()
+  (furball-test--with-dashboard furball-test--grouped-landing-page
+                                (furball-next-item)
+                                (should (equal (furball-test--row-text) "Sidekick"))
+                                (furball-toggle-at-point)
+                                (should (equal (save-excursion (furball-test--visit-rows))
+                                               '("Ungrouped" "Open Ungrouped" "Tyda" "Tyda logs" "Open Tyda logs")))
+                                (furball-toggle-at-point)
+                                (should (equal (save-excursion (furball-test--visit-rows))
+                                               '("Sidekick monitors" "Sidekick failures"
+                                                 "Ungrouped" "Open Ungrouped" "Tyda" "Tyda logs" "Open Tyda logs")))
+                                (furball-toggle-at-point)
+                                (furball-toggle-at-point)
+                                (furball-test--visit-rows)
+                                (dotimes (_ 5) (furball-previous-item))
+                                (should (equal (furball-test--row-text) "Sidekick"))))
+
+(ert-deftest furball-folds-survive-preview-arrival-and-refresh ()
+  (furball-test--with-dashboard furball-test--grouped-landing-page
+                                (search-forward "Sidekick failures")
+                                (beginning-of-line)
+                                (furball-toggle-at-point)
+                                (should (invisible-p (save-excursion (search-forward "Open Sidekick failures"))))
+                                (funcall (nth 2 callbacks) `((:data . ((data . (,furball-test--log)))) (:fetched-at . 100)))
+                                (should (string-search "Sidekick task failed" (buffer-string)))
+                                (should (invisible-p (save-excursion (search-forward "Sidekick task failed"))))
+                                (should (equal (furball-test--row-text) "Sidekick failures"))
+                                (furball-refresh)
+                                (should (invisible-p (save-excursion (search-forward "Open Sidekick failures"))))
+                                (should-not (invisible-p (save-excursion (goto-char (point-min))
+                                                                         (search-forward "Open Sidekick monitors"))))))
 
 (defconst furball-test--monitor-search
   '((monitors . (((id . 1) (name . "Web 5xx") (status . "OK"))))
@@ -288,7 +365,7 @@
 
 (ert-deftest furball-monitor-views-summarize-all-matching-statuses ()
   (cl-letf (((symbol-function 'furball--request)
-             (lambda (_site _method _path _body callback)
+             (lambda (_site _method _path _body callback &optional _options)
                (funcall callback `((:data . ,furball-test--monitor-search) (:fetched-at . 100))))))
     (let ((furball-landing-page '(((:name . "Tyda") (:kind . monitors) (:query . "tag:\"service:tyda\"")))))
       (with-temp-buffer
@@ -372,7 +449,7 @@
           (set-file-modes file #o700)
           (let ((furball-pup-command file)
                 (furball-pup-timeout (or timeout 3)))
-            (setq process (furball--request
+            (setq process (furball--start-pup
                            "us5.datadoghq.com" "POST" "/api/v2/logs/events/search" body
                            (lambda (value) (setq result value calls (1+ calls)))))
             (setq before (null result) command (process-command process))
@@ -387,6 +464,101 @@
             (list result command before)))
       (when (and process (process-live-p process)) (delete-process process))
       (delete-file file))))
+
+(defmacro furball-test--with-queue (limit period &rest body)
+  "Run BODY with a LIMIT per PERIOD log-search budget and recorded Pup starts.
+BODY sees `started', newest first, as (PATH . CALLBACK) pairs."
+  (declare (indent 2))
+  `(let ((furball-rate-limits
+          `((logs-search . ((:path . "/api/v2/logs/events/search")
+                            (:limit . ,,limit) (:period . ,,period)))))
+         (furball--queues nil)
+         started)
+     (cl-letf (((symbol-function 'furball--start-pup)
+                (lambda (_site _method path _body callback)
+                  (push (cons path callback) started))))
+       ,@body)))
+
+(defun furball-test--wait-until (predicate &optional seconds)
+  "Run timers until PREDICATE returns non-nil or SECONDS elapse."
+  (let ((deadline (+ (float-time) (or seconds 2))))
+    (while (and (not (funcall predicate)) (< (float-time) deadline))
+      (accept-process-output nil 0.02))
+    (funcall predicate)))
+
+(defconst furball-test--logs-path "/api/v2/logs/events/search")
+
+(defconst furball-test--rate-limited
+  '((:error . "Pup exited 173: Error: HTTP 429") (:rate-limited . t) (:retry-after . 0.1)))
+
+(ert-deftest furball-rate-limit-queues-requests-beyond-the-budget ()
+  (furball-test--with-queue 2 0.3
+                            (let (waits)
+                              (dotimes (_ 3)
+                                (furball--request "us5.datadoghq.com" "POST" furball-test--logs-path nil #'ignore
+                                                  `((:on-wait . ,(lambda (message) (push message waits))))))
+                              (furball--request "us5.datadoghq.com" "GET" "/api/v1/monitor/search" nil #'ignore)
+                              (should (= (length started) 3))
+                              (should (equal (caar started) "/api/v1/monitor/search"))
+                              (should (equal (car waits) "waiting: logs-search allows 2 per 0.3s"))
+                              (should (furball-test--wait-until (lambda () (= (length started) 4))))
+                              (should (equal (caar started) furball-test--logs-path)))))
+
+(ert-deftest furball-rate-limit-drops-requests-no-longer-wanted ()
+  (furball-test--with-queue 1 0.2
+                            (let ((wanted t) delivered)
+                              (furball--request "us5.datadoghq.com" "POST" furball-test--logs-path nil #'ignore)
+                              (furball--request "us5.datadoghq.com" "POST" furball-test--logs-path nil
+                                                (lambda (result) (setq delivered result))
+                                                `((:live-p . ,(lambda () wanted))))
+                              (setq wanted nil)
+                              (furball-test--wait-until (lambda () nil) 0.4)
+                              (should (= (length started) 1))
+                              (should-not delivered))))
+
+(ert-deftest furball-rate-limited-requests-retry-then-deliver-once ()
+  (furball-test--with-queue 3 10
+                            (let (results)
+                              (furball--request "us5.datadoghq.com" "POST" furball-test--logs-path nil
+                                                (lambda (result) (push result results)))
+                              (funcall (cdar started) furball-test--rate-limited)
+                              (should-not results)
+                              (should (furball-test--wait-until (lambda () (= (length started) 2))))
+                              (funcall (cdar started) '((:data . ((data . nil))) (:fetched-at . 1)))
+                              (should (equal results '(((:data . ((data . nil))) (:fetched-at . 1))))))))
+
+(ert-deftest furball-rate-limited-requests-report-the-error-after-retries ()
+  (furball-test--with-queue 3 10
+                            (let ((furball-rate-limit-retries 1) results)
+                              (furball--request "us5.datadoghq.com" "GET" "/api/v1/monitor/search" nil
+                                                (lambda (result) (push result results)))
+                              (funcall (cdar started) furball-test--rate-limited)
+                              (should (furball-test--wait-until (lambda () (= (length started) 2))))
+                              (funcall (cdar started) furball-test--rate-limited)
+                              (should (= (length results) 1))
+                              (should (string-match-p "HTTP 429" (map-elt (car results) :error))))))
+
+(ert-deftest furball-dashboard-explains-previews-waiting-for-budget ()
+  (furball-test--with-queue 1 10
+                            (let ((furball-landing-page '(((:name . "First") (:kind . logs) (:query . "a"))
+                                                          ((:name . "Second") (:kind . logs) (:query . "b")))))
+                              (with-temp-buffer
+                                (furball-mode)
+                                (setq furball--state '((:view . ((:kind . dashboard)))))
+                                (furball-refresh)
+                                (should (string-search "Fetching preview… (waiting: logs-search allows 1 per 10s)"
+                                                       (buffer-string)))
+                                (furball-refresh)
+                                (funcall (cdar (last started)) '((:data . ((data . nil))) (:fetched-at . 1)))
+                                (should (= (length started) 1))))))
+
+(ert-deftest furball-pup-reports-rate-limits-as-data ()
+  (let ((result (car (furball-test--pup
+                      (concat "printf 'Error: HTTP 429 https://api/logs\\nRate limit details:\\n"
+                              "  limit: 3\\n  reset: 5\\n' >&2; exit 173")))))
+    (should (map-elt result :rate-limited))
+    (should (= (map-elt result :retry-after) 5))
+    (should (string-match-p "Pup exited 173" (map-elt result :error)))))
 
 (ert-deftest furball-pup-is-asynchronous-and-preserves-stdin-json ()
   (let* ((query "service:web \"$(touch /tmp/never-execute)\" ; &")
@@ -585,7 +757,7 @@
       (furball-mode)
       (let ((inhibit-read-only t)) (insert highlighted))
       (goto-char (point-min))
-      (should (eq (key-binding (kbd "TAB")) #'furball-toggle-log-preview))
+      (should (eq (key-binding (kbd "TAB")) #'furball-toggle-at-point))
       (should (eq (key-binding (kbd "RET")) #'furball-open-at-point))
       (should buffer-read-only))))
 

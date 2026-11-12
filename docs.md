@@ -17,9 +17,12 @@ Path: @/
 ### Core Implementation
 
 - Each request starts Pup with `--no-agent --output json api PATH --method METHOD` through `make-process`, without a shell. JSON request bodies go to stdin via `--input -`; each child receives its selected `DD_SITE`.
+- `furball--request` queues requests per (site, rule) from `furball-rate-limits`, starting at most `:limit` per `:period`. Pup's HTTP 429 output becomes `:rate-limited` and `:retry-after` in the result; the queue pauses until the reset and retries the request first. Callers pass `:live-p` so superseded requests are dropped unsent, and `:on-wait` to display why a request is delayed. `furball--start-pup` is the raw transport.
 - The transport parses stdout as JSON, reports process failures with stderr context, and terminates timed-out processes. Completion delivers one result and releases process buffers and timers.
 - Search, URL, time, status, and saved-view menus collect arguments before explicit application; cancelling preserves the active scope. Contextual actions coexist with direct buffer shortcuts.
-- The landing page fetches compact previews independently; selecting a view opens a full results buffer.
+- The landing page fetches compact previews independently; selecting a view opens a full results buffer. Views sharing a `:group` are gathered under a level-1 heading at the group's first position.
+- Result buffers render through an ewoc whose node data identify parts of the snapshot (dashboard section, group heading, header, row, placeholder, next-page hint). Arriving previews, pagination, failed refreshes, and preview toggles redraw only the affected nodes.
+- Group and view headings carry an `outline-level` text property found by `outline-search-level`. Folded heading keys are recorded before each redraw and re-folded afterwards, so folds survive partial and full redraws.
 - Buffer-local alist snapshots track the view, fixed log scope, fetched rows, pagination, and freshness. Updates replace records rather than modifying saved customization.
 - Request tokens reject superseded asynchronous responses. Pagination reuses the resolved time window.
 - Optional Evil integration loads when Evil is available. It maps shared commands into result normal/motion states and query normal/insert/visual states; results start in normal and queries in insert, with row navigation on `j`/`k`.

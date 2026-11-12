@@ -222,6 +222,7 @@
   [["Browse"
     ("c" "Traceback in compilation mode" furball-open-traceback)
     ("RET" "Open selected row" furball-open-at-point :inapt-if-not furball--selected-row-p)
+    ("TAB" "Fold section or toggle preview" furball-toggle-at-point)
     ("v" "Saved views" furball-saved-views-menu)
     ("x" "Log view functions" furball-log-functions-menu :if furball--log-view-functions)
     ("L" "Log search" furball-search-menu)

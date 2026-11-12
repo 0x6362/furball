@@ -19,6 +19,7 @@
 (require 'browse-url)
 (require 'compile)
 (require 'ewoc)
+(require 'outline)
 (require 'org-faces)
 (require 'furball-api)
 
@@ -27,7 +28,9 @@
      (:query . "status:(Alert OR Warn)")))
   "Ordered saved views displayed by `furball'.
 Each alist has :name, :kind (monitors or logs), and :query.
-Optional keys are :site and :time-range (for example, \"1h\").
+Optional keys are :site, :time-range (for example, \"1h\"), and :group.
+Views sharing a :group string are displayed together under a foldable
+heading, at the position of the group's first view.
 :log-view-functions is a list of function symbols accepting one Furball buffer.
 :directory-abbrev-alist maps traceback path regexps to local directories.
 :project-directory-id-fn accepts a Furball buffer and returns its
@@ -36,7 +39,8 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
            (:query . \"tag:\\\"component:sidekick\\\"\")))."
   :type '(repeat (alist :key-type (choice (const :name) (const :kind)
                                           (const :query) (const :site)
-                                          (const :time-range) (const :log-view-functions)
+                                          (const :time-range) (const :group)
+                                          (const :log-view-functions)
                                           (const :directory-abbrev-alist)
                                           (const :project-directory-id-fn))
                         :value-type (choice string (const monitors) (const logs)
@@ -88,7 +92,7 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   '(("g" . furball-refresh) ("e" . furball-edit-query)
     ("RET" . furball-open-at-point) ("o" . furball-open-at-point)
     ("n" . furball-next-item) ("p" . furball-previous-item)
-    ("TAB" . furball-toggle-log-preview) ("<tab>" . furball-toggle-log-preview) ("<backtab>" . furball-previous-item)
+    ("TAB" . furball-toggle-at-point) ("<tab>" . furball-toggle-at-point) ("<backtab>" . furball-previous-item)
     ("m" . furball-more) ("l" . furball-search-menu)
     ("L" . furball-search-menu) ("v" . furball-saved-views-menu)
     ("x" . furball-log-functions-menu) ("c" . furball-open-traceback)
@@ -111,6 +115,9 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   (setq-local truncate-lines t)
   (setq-local cursor-type 'hbar)
   (setq-local hl-line-face 'furball-log-highlight)
+  (setq-local outline-search-function #'outline-search-level)
+  (setq-local outline-level (lambda () (get-text-property (point) 'outline-level)))
+  (outline-minor-mode 1)
   (hl-line-mode 1))
 
 (defvar furball-log-mode-map
@@ -220,23 +227,29 @@ Completion at point uses syntax and values observed in the source view."
          (cursor (and more (map-elt furball--state :next)))
          (token (gensym "furball-request"))
          (buffer (current-buffer)))
-    (furball--set-state `((:token . ,token) (:loading . t) (:error . nil)))
+    (furball--set-state `((:token . ,token) (:loading . t) (:error . nil) (:waiting . nil)))
     (furball--redraw '(header))
     (furball--fetch
      view scope cursor
      (lambda (result)
-       (when (buffer-live-p buffer)
+       (when (furball--current-p buffer token)
          (with-current-buffer buffer
-           (when (eq token (map-elt furball--state :token))
-             (let ((shown (length (map-elt furball--state :rows))))
-               (furball--accept result view scope more)
-               (cond ((map-elt result :error) (furball--redraw '(header)))
-                     (more (furball--append-rows shown))
-                     (t (furball--render)))))))))))
+           (let ((shown (length (map-elt furball--state :rows))))
+             (furball--accept result view scope more)
+             (cond ((map-elt result :error) (furball--redraw '(header)))
+                   (more (furball--append-rows shown))
+                   (t (furball--render)))))))
+     nil
+     `((:live-p . ,(lambda () (furball--current-p buffer token)))
+       (:on-wait . ,(lambda (message)
+                      (when (furball--current-p buffer token)
+                        (with-current-buffer buffer
+                          (furball--set-state `((:waiting . ,message)))
+                          (furball--redraw '(header))))))))))
 
 (defun furball--accept (result view scope more)
   "Accept RESULT for VIEW and SCOPE, appending rows when MORE is non-nil."
-  (furball--set-state `((:loading . nil) (:error . ,(map-elt result :error))))
+  (furball--set-state `((:loading . nil) (:waiting . nil) (:error . ,(map-elt result :error))))
   (unless (map-elt result :error)
     (let* ((data (map-elt result :data))
            (kind (map-elt view :kind))
@@ -274,19 +287,33 @@ Completion at point uses syntax and values observed in the source view."
          (furball--fetch
           view scope nil
           (lambda (result)
-            (when (buffer-live-p buffer)
+            (when (furball--current-p buffer token)
               (with-current-buffer buffer
-                (when (eq token (map-elt furball--state :token))
-                  (furball--set-state
-                   `((:sections . ,(seq-map-indexed
-                                    (lambda (section position)
-                                      (if (= position index)
-                                          (append `((:view . ,view) (:scope . ,scope)) result)
-                                        section))
-                                    (map-elt furball--state :sections)))))
-                  (furball--redraw (cons 'section index))))))
-          5)))
+                (furball--update-section
+                 index (lambda (_) (append `((:view . ,view) (:scope . ,scope)) result))))))
+          5
+          `((:live-p . ,(lambda () (furball--current-p buffer token)))
+            (:on-wait . ,(lambda (message)
+                           (when (furball--current-p buffer token)
+                             (with-current-buffer buffer
+                               (furball--update-section
+                                index (lambda (section)
+                                        (furball--with section `((:waiting . ,message)))))))))))))
      views)))
+
+(defun furball--current-p (buffer token)
+  "Return non-nil while BUFFER is live and still awaiting request TOKEN."
+  (and (buffer-live-p buffer)
+       (eq token (map-elt (buffer-local-value 'furball--state buffer) :token))))
+
+(defun furball--update-section (index update)
+  "Replace dashboard section INDEX with the result of UPDATE and redraw it."
+  (furball--set-state
+   `((:sections . ,(seq-map-indexed
+                    (lambda (section position)
+                      (if (= position index) (funcall update section) section))
+                    (map-elt furball--state :sections)))))
+  (furball--redraw (cons 'section index)))
 
 (defun furball-more ()
   "Fetch the next results page without changing the original time window."
@@ -340,6 +367,16 @@ COUNTS is Datadog's counts.status list of alists with name and count."
   "Insert section heading TEXT."
   (insert (propertize (concat "\n" text "\n") 'face 'furball-heading)))
 
+(defun furball--outline-heading (text level key)
+  "Insert foldable heading TEXT at outline LEVEL as a row identified by KEY."
+  (insert (propertize "\n" 'face 'furball-heading))
+  (let ((start (point)))
+    (insert (propertize text 'face 'furball-heading 'outline-level level)
+            (propertize "\n" 'face 'furball-heading))
+    (add-text-properties start (point)
+                         (list 'furball-key key 'furball-action 'heading
+                               'furball-value key 'mouse-face 'highlight))))
+
 (defun furball--row (text key action value)
   "Insert TEXT as a row identified by KEY, with ACTION and VALUE."
   (let ((start (point)))
@@ -353,7 +390,7 @@ COUNTS is Datadog's counts.status list of alists with name and count."
   (format-time-string "%Y-%m-%d %H:%M:%S UTC" (/ milliseconds 1000.0) t))
 
 (defconst furball--footer
-  (propertize "\n? Actions · RET Open · TAB Preview · n/p Navigate · q Quit\n" 'face 'shadow)
+  (propertize "\n? Actions · RET Open · TAB Fold/Preview · n/p Navigate · q Quit\n" 'face 'shadow)
   "Key hint displayed below every result view.")
 
 (defun furball--nodes ()
@@ -362,8 +399,9 @@ COUNTS is Datadog's counts.status list of alists with name and count."
     ('dashboard
      (if (null furball-landing-page)
          '((empty))
-       (seq-map-indexed (lambda (_ index) (cons 'section index))
-                        (map-elt furball--state :sections))))
+       (furball--dashboard-order
+        (mapcar (lambda (section) (map-elt section :view))
+                (map-elt furball--state :sections)))))
     ('monitor '((header) (more)))
     (_ `((header)
          ,@(or (mapcar (lambda (index) (cons 'row index))
@@ -371,10 +409,30 @@ COUNTS is Datadog's counts.status list of alists with name and count."
                '((empty)))
          (more)))))
 
+(defun furball--dashboard-order (views)
+  "Return dashboard node data for VIEWS, gathering each :group together.
+A group heading takes the position of its first view; ungrouped views keep
+their configured positions."
+  (let ((indexed (seq-map-indexed #'cons views))
+        seen)
+    (seq-mapcat
+     (lambda (entry)
+       (let ((group (map-elt (car entry) :group)))
+         (cond ((null group) (list (cons 'section (cdr entry))))
+               ((member group seen) nil)
+               (t (push group seen)
+                  (cons (cons 'group group)
+                        (mapcar (lambda (member) (cons 'section (cdr member)))
+                                (seq-filter (lambda (member)
+                                              (equal (map-elt (car member) :group) group))
+                                            indexed)))))))
+     indexed)))
+
 (defun furball--insert-node (node)
   "Insert the part of the current snapshot identified by NODE."
   (let ((view (map-elt furball--state :view)))
     (pcase node
+      (`(group . ,name) (furball--outline-heading name 1 (list 'heading 'group name)))
       (`(section . ,index) (furball--insert-section (nth index (map-elt furball--state :sections))))
       ('(header) (furball--insert-header))
       (`(row . ,index)
@@ -400,14 +458,39 @@ COUNTS is Datadog's counts.status list of alists with name and count."
         (setq at (next-single-property-change at 'furball-key nil (point-max)))))
     (when found (goto-char found))))
 
+(defun furball--headings ()
+  "Return the start positions of foldable headings, in buffer order."
+  (let ((at (point-min)) headings)
+    (while (setq at (text-property-not-all at (point-max) 'furball-action nil))
+      (when (eq (get-text-property at 'furball-action) 'heading)
+        (push at headings))
+      (setq at (next-single-property-change at 'furball-key nil (point-max))))
+    (nreverse headings)))
+
+(defun furball--folded-headings ()
+  "Return the keys of visible headings whose bodies are folded."
+  (seq-keep (lambda (at)
+              (and (not (outline-invisible-p at))
+                   (outline-invisible-p (save-excursion (goto-char at) (pos-eol)))
+                   (get-text-property at 'furball-key)))
+            (furball--headings)))
+
+(defun furball--fold-headings (keys)
+  "Fold the headings identified by KEYS."
+  (dolist (at (furball--headings))
+    (when (member (get-text-property at 'furball-key) keys)
+      (save-excursion (goto-char at) (outline-hide-subtree)))))
+
 (defun furball--preserving-point (full update)
   "Call UPDATE to change the buffer, keeping point on its row.
 When FULL is non-nil, UPDATE replaces the whole buffer."
   (let ((inhibit-read-only t)
         (key (get-text-property (point) 'furball-key))
         (position (point))
-        (marker (copy-marker (point))))
+        (marker (copy-marker (point)))
+        (folded (furball--folded-headings)))
     (funcall update)
+    (furball--fold-headings folded)
     (goto-char (if full (min position (point-max)) marker))
     (set-marker marker nil)
     (when key
@@ -460,7 +543,9 @@ When FULL is non-nil, UPDATE replaces the whole buffer."
     (when (map-elt view :query)
       (insert (format "Query: %s\n" (map-elt view :query))))
     (when (map-elt furball--state :loading)
-      (insert (propertize "Refreshing… previous results retained below\n" 'face 'shadow)))
+      (insert (propertize (format "Refreshing… previous results retained below%s\n"
+                                  (furball--waiting-text (map-elt furball--state :waiting)))
+                          'face 'shadow)))
     (when (map-elt furball--state :error)
       (insert (propertize (format "Fetch failed: %s\n" (map-elt furball--state :error))
                           'face 'error)))
@@ -482,15 +567,23 @@ When FULL is non-nil, UPDATE replaces the whole buffer."
       ('logs (furball--insert-logs-header))
       ('monitor (furball--render-monitor)))))
 
+(defun furball--waiting-text (message)
+  "Return MESSAGE explaining a delayed request as a parenthetical, or \"\"."
+  (if message (format " (%s)" message) ""))
+
 (defun furball--insert-section (section)
   "Insert the preview of a saved view SECTION, linked to its full results."
   (let ((view (map-elt section :view)) (data (map-elt section :data)))
-    (furball--heading (map-elt view :name))
+    (furball--outline-heading (map-elt view :name) (if (map-elt view :group) 2 1)
+                              (list 'heading 'view view))
     (furball--row (format "  Open %s  [%s]" (map-elt view :name) (map-elt view :kind))
                   (list 'view view) 'view view)
     (insert (propertize (format "  %s\n" (map-elt view :query)) 'face 'shadow))
     (cond
-     ((map-elt section :loading) (insert "  Fetching preview…\n"))
+     ((map-elt section :loading)
+      (insert "  Fetching preview…"
+              (propertize (furball--waiting-text (map-elt section :waiting)) 'face 'shadow)
+              "\n"))
      ((map-elt section :error)
       (insert (propertize (format "  %s\n" (map-elt section :error)) 'face 'error)))
      ((eq (map-elt view :kind) 'monitors)
@@ -519,6 +612,13 @@ When FULL is non-nil, UPDATE replaces the whole buffer."
   "Insert monitor ROWS belonging to VIEW."
   (unless rows (insert "\n  No monitor rows loaded.\n"))
   (dolist (monitor rows) (furball--monitor-row monitor view)))
+
+(defun furball-toggle-at-point ()
+  "Fold the heading at point, or toggle the preview of the log at point."
+  (interactive)
+  (if (eq (get-text-property (point) 'furball-action) 'heading)
+      (outline-cycle)
+    (furball-toggle-log-preview)))
 
 (defun furball-toggle-log-preview ()
   "Expand or collapse the log at point without leaving the results buffer."
@@ -661,7 +761,8 @@ Preserve Datadog variables and conditional markup verbatim."
         (at (point)))
     (while (and (< at (point-max))
                 (or (null (get-text-property at 'furball-key))
-                    (equal key (get-text-property at 'furball-key))))
+                    (equal key (get-text-property at 'furball-key))
+                    (invisible-p at)))
       (setq at (next-single-property-change at 'furball-key nil (point-max))))
     (when (< at (point-max)) (goto-char at))))
 
@@ -677,7 +778,7 @@ Preserve Datadog variables and conditional markup verbatim."
     (while (and (> at (point-min)) (not target))
       (let ((previous-key (get-text-property (1- at) 'furball-key)))
         (setq at (previous-single-property-change at 'furball-key nil (point-min)))
-        (when previous-key (setq target at))))
+        (when (and previous-key (not (invisible-p at))) (setq target at))))
     (when target (goto-char target))))
 
 (defun furball--log-tracebacks (log)
@@ -755,6 +856,7 @@ Preserve Datadog variables and conditional markup verbatim."
       ('monitor (furball--open-monitor (map-elt value :monitor-id) (map-elt value :site)
                                        (map-elt value :log-view-functions) value))
       ('group (furball--monitor-logs value))
+      ('heading (outline-cycle))
       ('log
        (let ((buffer (generate-new-buffer "*furball: Log details*"))
              (view (or (get-text-property (point) 'furball-view)

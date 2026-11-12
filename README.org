@@ -37,6 +37,14 @@ Pup must be on Emacs's =exec-path=, or set =furball-pup-command= to its
 absolute executable path. =DD_SITE= supplies Furball's initial default site.
 =furball-pup-timeout= limits each request to 60 seconds by default.
 
+Datadog limits log search to a few requests per period for the whole
+organization. =furball-rate-limits= keeps Furball within that budget per
+site (three log searches per ten seconds by default): requests beyond it
+wait, and the dashboard or results header says so. When Datadog still
+answers with a rate limit, Furball waits for the reported reset and
+retries up to =furball-rate-limit-retries= times. A waiting request is
+dropped unsent once a newer refresh replaces it or its buffer closes.
+
 Access requires =monitors_read= and =logs_read_data= permissions
 and access to the data being queried. See Datadog's [[https://docs.datadoghq.com/api/latest/monitors/monitors-search/][monitor search]] and
 [[https://docs.datadoghq.com/api/latest/logs/search-logs/][log search]] documentation. Furball only reads Datadog data, including when
@@ -62,6 +70,20 @@ Each view has =:name=, =:kind= (=monitors= or =logs=), and =:query=.
 Optional =:site= overrides the configured site. Log views accept
 =:time-range=, such as =15m=, =1h=, or =2d=; the default is one hour.
 Editing a running view does not modify its saved customization.
+
+Views that share a =:group= string appear together under one heading,
+placed where the group's first view is configured. Ungrouped views keep
+their configured positions:
+
+#+begin_src emacs-lisp
+((:name . "Tyda monitors") (:group . "Tyda") (:kind . monitors)
+ (:query . "tag:\"service:tyda\""))
+#+end_src
+
+Group and view headings fold with =outline-minor-mode=. =TAB= on a heading
+cycles between hiding everything, showing only child headings, and showing
+everything. Folds persist while previews arrive and across refreshes, and
+=n= / =p= skip folded rows.
 
 * Traceback source navigation
 
@@ -135,7 +157,7 @@ shortcuts remain available when no menu is active:
 | Key | Action |
 |-----+--------|
 | =RET= / =o= | Open selected view, monitor, group logs, or full log record |
-| =TAB= | Expand/collapse the selected log inline |
+| =TAB= | Fold the heading at point, or expand/collapse the selected log inline |
 | =n= | Next selectable row |
 | =p= / =S-TAB= | Previous selectable row |
 | =e= | Edit the current query in a separate buffer |

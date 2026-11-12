@@ -2,7 +2,7 @@ EMACS ?= emacs
 SANDBOX := .sandbox
 SOURCES := furball.el furball-api.el furball-query.el furball-transient.el furball-evil.el
 TESTS := tests/furball-tests.el tests/furball-transient-tests.el
-BATCH := $(EMACS) -Q --batch --eval '(setq package-user-dir "$(CURDIR)/$(SANDBOX)")' --eval '(package-initialize)' -L . -L tests
+BATCH := $(EMACS) -Q --batch --eval '(setq load-prefer-newer t)' --eval '(setq package-user-dir "$(CURDIR)/$(SANDBOX)")' --eval '(package-initialize)' -L . -L tests
 
 .PHONY: all check format lint test clean
 
