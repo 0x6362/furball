@@ -248,7 +248,8 @@ Completion at point uses syntax and values observed in the source view."
          (:updated . ,(map-elt result :fetched-at))
          (:partial . ,(or (map-nested-elt data '(meta warnings))
                           (equal (map-nested-elt data '(meta status)) "timeout")))
-         (:total . ,(map-nested-elt data '(metadata total_count)))))
+         (:total . ,(map-nested-elt data '(metadata total_count)))
+         (:status-counts . ,(map-nested-elt data '(counts status)))))
       (furball--learn-completions kind data))))
 
 (defun furball--refresh-dashboard ()
@@ -292,14 +293,41 @@ Completion at point uses syntax and values observed in the source view."
     (user-error "No more pages"))
   (furball--load-page t))
 
+(defun furball--status-face (status)
+  "Return the badge face for monitor STATUS."
+  (let ((text (upcase (or status "Unknown"))))
+    (cond ((equal text "ALERT") 'furball-alert)
+          ((member text '("WARN" "WARNING" "NO DATA")) 'furball-warn)
+          ((equal text "OK") 'furball-ok)
+          (t 'shadow))))
+
 (defun furball--status (status)
   "Return a display badge for STATUS."
-  (let ((text (upcase (or status "Unknown"))))
-    (propertize (format "%-8s" text) 'face
-                (cond ((equal text "ALERT") 'furball-alert)
-                      ((member text '("WARN" "WARNING" "NO DATA")) 'furball-warn)
-                      ((equal text "OK") 'furball-ok)
-                      (t 'shadow)))))
+  (propertize (format "%-8s" (upcase (or status "Unknown")))
+              'face (furball--status-face status)))
+
+(defconst furball--status-order '("Alert" "Warn" "No Data" "OK")
+  "Monitor statuses from most to least severe; others sort before OK.")
+
+(defun furball--status-summary (counts)
+  "Return monitor status COUNTS as text, most severe first.
+COUNTS is Datadog's counts.status list of alists with name and count."
+  (let ((rank (lambda (entry)
+                (or (seq-position furball--status-order (map-elt entry 'name))
+                    (- (length furball--status-order) 1.5)))))
+    (mapconcat (lambda (entry)
+                 (propertize (format "%s %s" (map-elt entry 'count)
+                                     (upcase (map-elt entry 'name)))
+                             'face (furball--status-face (map-elt entry 'name))))
+               (seq-sort-by rank #'< (seq-filter (lambda (entry) (> (map-elt entry 'count) 0))
+                                                 counts))
+               " · ")))
+
+(defun furball--insert-status-summary (counts)
+  "Insert a line summarizing monitor status COUNTS, if any."
+  (let ((summary (furball--status-summary counts)))
+    (unless (string-empty-p summary)
+      (insert "  " summary "\n"))))
 
 (defun furball--heading (text)
   "Insert section heading TEXT."
@@ -348,6 +376,7 @@ Completion at point uses syntax and values observed in the source view."
                   (length (map-elt furball--state :rows))
                   (if-let* ((total (map-elt furball--state :total)))
                       (format " of %s" total) "")))
+         (furball--insert-status-summary (map-elt furball--state :status-counts))
          (furball--render-monitors (map-elt furball--state :rows) view))
         ('logs (furball--render-logs))
         ('monitor (furball--render-monitor)))
@@ -379,6 +408,7 @@ Completion at point uses syntax and values observed in the source view."
          ((map-elt section :error)
           (insert (propertize (format "  %s\n" (map-elt section :error)) 'face 'error)))
          ((eq (map-elt view :kind) 'monitors)
+          (furball--insert-status-summary (map-nested-elt data '(counts status)))
           (furball--render-monitors (map-elt data 'monitors) view))
          (t (dolist (log (map-elt data 'data)) (furball--log-row log view))
             (unless (map-elt data 'data) (insert "  No matching logs in this window.\n"))))

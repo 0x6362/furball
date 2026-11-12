@@ -195,6 +195,37 @@
         (furball-previous-item)
         (should (equal (map-elt (get-text-property (point) 'furball-value) :name) "Sidekick"))))))
 
+(defconst furball-test--monitor-search
+  '((monitors . (((id . 1) (name . "Web 5xx") (status . "OK"))))
+    (counts . ((status . (((name . "OK") (count . 9))
+                          ((name . "Ignored") (count . 1))
+                          ((name . "Alert") (count . 2))
+                          ((name . "Warn") (count . 0))))))
+    (metadata . ((page . 0) (page_count . 1) (total_count . 12)))))
+
+(ert-deftest furball-monitor-status-summary-orders-by-severity ()
+  (let ((summary (furball--status-summary
+                  (map-nested-elt furball-test--monitor-search '(counts status)))))
+    (should (equal summary "2 ALERT · 1 IGNORED · 9 OK"))
+    (should (eq (get-text-property 0 'face summary) 'furball-alert))))
+
+(ert-deftest furball-monitor-views-summarize-all-matching-statuses ()
+  (cl-letf (((symbol-function 'furball--request)
+             (lambda (_site _method _path _body callback)
+               (funcall callback `((:data . ,furball-test--monitor-search) (:fetched-at . 100))))))
+    (let ((furball-landing-page '(((:name . "Tyda") (:kind . monitors) (:query . "tag:\"service:tyda\"")))))
+      (with-temp-buffer
+        (furball-mode)
+        (setq furball--state '((:view . ((:kind . dashboard)))))
+        (furball-refresh)
+        (should (string-match-p "2 ALERT · 1 IGNORED · 9 OK" (buffer-string)))))
+    (with-temp-buffer
+      (furball-mode)
+      (setq furball--state `((:view . ,(furball--view '((:name . "Tyda") (:kind . monitors)
+                                                        (:query . "tag:\"service:tyda\""))))))
+      (furball-refresh)
+      (should (string-match-p "2 ALERT · 1 IGNORED · 9 OK" (buffer-string))))))
+
 (ert-deftest furball-completion-offers-fields-and-observed-values ()
   (with-temp-buffer
     (furball-query-mode)
