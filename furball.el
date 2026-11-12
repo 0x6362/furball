@@ -18,6 +18,7 @@
 
 (require 'browse-url)
 (require 'compile)
+(require 'ewoc)
 (require 'org-faces)
 (require 'furball-api)
 
@@ -79,6 +80,9 @@ Example: (((:name . \"Sidekick\") (:kind . monitors)
   "Results buffer targeted by a query editor.")
 (defvar-local furball--completion-values nil
   "Completion candidates observed in this view's results.")
+
+(defvar-local furball--ewoc nil
+  "Ewoc whose node data identify the displayed parts of `furball--state'.")
 
 (defconst furball--result-bindings
   '(("g" . furball-refresh) ("e" . furball-edit-query)
@@ -217,15 +221,18 @@ Completion at point uses syntax and values observed in the source view."
          (token (gensym "furball-request"))
          (buffer (current-buffer)))
     (furball--set-state `((:token . ,token) (:loading . t) (:error . nil)))
-    (furball--render)
+    (furball--redraw '(header))
     (furball--fetch
      view scope cursor
      (lambda (result)
        (when (buffer-live-p buffer)
          (with-current-buffer buffer
            (when (eq token (map-elt furball--state :token))
-             (furball--accept result view scope more)
-             (furball--render))))))))
+             (let ((shown (length (map-elt furball--state :rows))))
+               (furball--accept result view scope more)
+               (cond ((map-elt result :error) (furball--redraw '(header)))
+                     (more (furball--append-rows shown))
+                     (t (furball--render)))))))))))
 
 (defun furball--accept (result view scope more)
   "Accept RESULT for VIEW and SCOPE, appending rows when MORE is non-nil."
@@ -277,7 +284,7 @@ Completion at point uses syntax and values observed in the source view."
                                           (append `((:view . ,view) (:scope . ,scope)) result)
                                         section))
                                     (map-elt furball--state :sections)))))
-                  (furball--render)))))
+                  (furball--redraw (cons 'section index))))))
           5)))
      views)))
 
@@ -345,91 +352,173 @@ COUNTS is Datadog's counts.status list of alists with name and count."
   "Format MILLISECONDS as a UTC timestamp."
   (format-time-string "%Y-%m-%d %H:%M:%S UTC" (/ milliseconds 1000.0) t))
 
-(defun furball--render ()
-  "Render the current snapshot, preserving selection by stable row identity."
+(defconst furball--footer
+  (propertize "\n? Actions · RET Open · TAB Preview · n/p Navigate · q Quit\n" 'face 'shadow)
+  "Key hint displayed below every result view.")
+
+(defun furball--nodes ()
+  "Return node data identifying the parts of the current snapshot, in order."
+  (pcase (map-nested-elt furball--state '(:view :kind))
+    ('dashboard
+     (if (null furball-landing-page)
+         '((empty))
+       (seq-map-indexed (lambda (_ index) (cons 'section index))
+                        (map-elt furball--state :sections))))
+    ('monitor '((header) (more)))
+    (_ `((header)
+         ,@(or (mapcar (lambda (index) (cons 'row index))
+                       (number-sequence 0 (1- (length (map-elt furball--state :rows)))))
+               '((empty)))
+         (more)))))
+
+(defun furball--insert-node (node)
+  "Insert the part of the current snapshot identified by NODE."
+  (let ((view (map-elt furball--state :view)))
+    (pcase node
+      (`(section . ,index) (furball--insert-section (nth index (map-elt furball--state :sections))))
+      ('(header) (furball--insert-header))
+      (`(row . ,index)
+       (let ((row (nth index (map-elt furball--state :rows))))
+         (if (eq (map-elt view :kind) 'monitors)
+             (furball--monitor-row row view)
+           (furball--log-row row))))
+      ('(empty)
+       (insert (pcase (map-elt view :kind)
+                 ('dashboard "\nCustomize furball-landing-page to add saved views.\n")
+                 ('monitors "\n  No monitor rows loaded.\n")
+                 (_ "  No log rows loaded.\n"))))
+      ('(more)
+       (when (map-elt furball--state :next)
+         (insert "\nMore results available — m loads the next page\n"))))))
+
+(defun furball--goto-key (key)
+  "Move to the first row identified by KEY, if displayed."
+  (let ((at (point-min)) (found nil))
+    (while (and (< at (point-max)) (not found))
+      (if (equal key (get-text-property at 'furball-key))
+          (setq found at)
+        (setq at (next-single-property-change at 'furball-key nil (point-max)))))
+    (when found (goto-char found))))
+
+(defun furball--preserving-point (full update)
+  "Call UPDATE to change the buffer, keeping point on its row.
+When FULL is non-nil, UPDATE replaces the whole buffer."
   (let ((inhibit-read-only t)
         (key (get-text-property (point) 'furball-key))
         (position (point))
-        (view (map-elt furball--state :view)))
-    (erase-buffer)
-    (if (eq (map-elt view :kind) 'dashboard)
-        (furball--render-dashboard)
-      (insert (format "\n%s  ·  %s\n" (map-elt view :name) (map-elt view :site)))
-      (when (map-elt view :query)
-        (insert (format "Query: %s\n" (map-elt view :query))))
-      (when (map-elt furball--state :loading)
-        (insert (propertize "Refreshing… previous results retained below\n" 'face 'shadow)))
-      (when (map-elt furball--state :error)
-        (insert (propertize (format "Fetch failed: %s\n" (map-elt furball--state :error))
-                            'face 'error)))
-      (when-let* ((updated (map-elt furball--state :updated)))
-        (insert (format "Fetched: %s\n" (furball--time (* updated 1000)))))
-      (when (and (map-elt furball--state :fetched-view)
-                 (not (equal view (map-elt furball--state :fetched-view))))
-        (insert (propertize "Results below belong to the previous query.\n" 'face 'warning)))
-      (when (map-elt furball--state :partial)
-        (insert (propertize "Partial results: Datadog reported warnings or a timeout.\n" 'face 'warning)))
-      (pcase (map-elt view :kind)
-        ('monitors
-         (furball--heading
-          (format "Monitors · %s loaded%s"
-                  (length (map-elt furball--state :rows))
-                  (if-let* ((total (map-elt furball--state :total)))
-                      (format " of %s" total) "")))
-         (furball--insert-status-summary (map-elt furball--state :status-counts))
-         (furball--render-monitors (map-elt furball--state :rows) view))
-        ('logs (furball--render-logs))
-        ('monitor (furball--render-monitor)))
-      (when (map-elt furball--state :next)
-        (insert "\nMore results available — m loads the next page\n")))
-    (insert (propertize "\n? Actions · RET Open · TAB Preview · n/p Navigate · q Quit\n" 'face 'shadow))
-    (goto-char (min position (point-max)))
+        (marker (copy-marker (point))))
+    (funcall update)
+    (goto-char (if full (min position (point-max)) marker))
+    (set-marker marker nil)
     (when key
-      (let ((at (point-min)) (found nil))
-        (while (and (< at (point-max)) (not found))
-          (if (equal key (get-text-property at 'furball-key))
-              (setq found at)
-            (setq at (next-single-property-change at 'furball-key nil (point-max)))))
-        (when found (goto-char found))))
+      (if (equal key (get-text-property (point) 'furball-key))
+          (goto-char (or (previous-single-property-change (1+ (point)) 'furball-key)
+                         (point-min)))
+        (furball--goto-key key)))
     (set-buffer-modified-p nil)))
 
-(defun furball--render-dashboard ()
-  "Insert saved view previews, each linked to its full results."
-  (if (null furball-landing-page)
-      (insert "\nCustomize furball-landing-page to add saved views.\n")
-    (dolist (section (map-elt furball--state :sections))
-      (let ((view (map-elt section :view)) (data (map-elt section :data)))
-        (furball--heading (map-elt view :name))
-        (furball--row (format "  Open %s  [%s]" (map-elt view :name) (map-elt view :kind))
-                      (list 'view view) 'view view)
-        (insert (propertize (format "  %s\n" (map-elt view :query)) 'face 'shadow))
-        (cond
-         ((map-elt section :loading) (insert "  Fetching preview…\n"))
-         ((map-elt section :error)
-          (insert (propertize (format "  %s\n" (map-elt section :error)) 'face 'error)))
-         ((eq (map-elt view :kind) 'monitors)
-          (furball--insert-status-summary (map-nested-elt data '(counts status)))
-          (furball--render-monitors (map-elt data 'monitors) view))
-         (t (dolist (log (map-elt data 'data)) (furball--log-row log view))
-            (unless (map-elt data 'data) (insert "  No matching logs in this window.\n"))))
-        (when (map-elt section :fetched-at)
-          (insert (propertize
-                   (format "  Preview fetched %s\n"
-                           (furball--time (* 1000 (map-elt section :fetched-at))))
-                   'face 'shadow)))))))
+(defun furball--render ()
+  "Render the current snapshot, preserving selection by stable row identity."
+  (furball--preserving-point
+   t (lambda ()
+       (erase-buffer)
+       (setq furball--ewoc (ewoc-create #'furball--insert-node nil furball--footer t))
+       (dolist (node (furball--nodes))
+         (ewoc-enter-last furball--ewoc node)))))
+
+(defun furball--find-node (data)
+  "Return the displayed node whose data equals DATA, or nil."
+  (when furball--ewoc
+    (let ((node (ewoc-nth furball--ewoc 0)))
+      (while (and node (not (equal (ewoc-data node) data)))
+        (setq node (ewoc-next furball--ewoc node)))
+      node)))
+
+(defun furball--redraw (&rest data)
+  "Redraw the nodes identified by DATA; render everything if any is missing."
+  (let ((nodes (mapcar #'furball--find-node data)))
+    (if (or (null nodes) (memq nil nodes))
+        (furball--render)
+      (furball--preserving-point
+       nil (lambda () (apply #'ewoc-invalidate furball--ewoc nodes))))))
+
+(defun furball--append-rows (shown)
+  "Display rows fetched after the first SHOWN rows."
+  (let ((more (furball--find-node '(more))))
+    (if (or (null more) (furball--find-node '(empty)))
+        (furball--render)
+      (furball--preserving-point
+       nil (lambda ()
+             (dolist (index (number-sequence shown (1- (length (map-elt furball--state :rows)))))
+               (ewoc-enter-before furball--ewoc more (cons 'row index)))
+             (ewoc-invalidate furball--ewoc (furball--find-node '(header)) more))))))
+
+(defun furball--insert-header ()
+  "Insert the current view's provenance, status, and result heading."
+  (let ((view (map-elt furball--state :view)))
+    (insert (format "\n%s  ·  %s\n" (map-elt view :name) (map-elt view :site)))
+    (when (map-elt view :query)
+      (insert (format "Query: %s\n" (map-elt view :query))))
+    (when (map-elt furball--state :loading)
+      (insert (propertize "Refreshing… previous results retained below\n" 'face 'shadow)))
+    (when (map-elt furball--state :error)
+      (insert (propertize (format "Fetch failed: %s\n" (map-elt furball--state :error))
+                          'face 'error)))
+    (when-let* ((updated (map-elt furball--state :updated)))
+      (insert (format "Fetched: %s\n" (furball--time (* updated 1000)))))
+    (when (and (map-elt furball--state :fetched-view)
+               (not (equal view (map-elt furball--state :fetched-view))))
+      (insert (propertize "Results below belong to the previous query.\n" 'face 'warning)))
+    (when (map-elt furball--state :partial)
+      (insert (propertize "Partial results: Datadog reported warnings or a timeout.\n" 'face 'warning)))
+    (pcase (map-elt view :kind)
+      ('monitors
+       (furball--heading
+        (format "Monitors · %s loaded%s"
+                (length (map-elt furball--state :rows))
+                (if-let* ((total (map-elt furball--state :total)))
+                    (format " of %s" total) "")))
+       (furball--insert-status-summary (map-elt furball--state :status-counts)))
+      ('logs (furball--insert-logs-header))
+      ('monitor (furball--render-monitor)))))
+
+(defun furball--insert-section (section)
+  "Insert the preview of a saved view SECTION, linked to its full results."
+  (let ((view (map-elt section :view)) (data (map-elt section :data)))
+    (furball--heading (map-elt view :name))
+    (furball--row (format "  Open %s  [%s]" (map-elt view :name) (map-elt view :kind))
+                  (list 'view view) 'view view)
+    (insert (propertize (format "  %s\n" (map-elt view :query)) 'face 'shadow))
+    (cond
+     ((map-elt section :loading) (insert "  Fetching preview…\n"))
+     ((map-elt section :error)
+      (insert (propertize (format "  %s\n" (map-elt section :error)) 'face 'error)))
+     ((eq (map-elt view :kind) 'monitors)
+      (furball--insert-status-summary (map-nested-elt data '(counts status)))
+      (furball--render-monitors (map-elt data 'monitors) view))
+     (t (dolist (log (map-elt data 'data)) (furball--log-row log view))
+        (unless (map-elt data 'data) (insert "  No matching logs in this window.\n"))))
+    (when (map-elt section :fetched-at)
+      (insert (propertize
+               (format "  Preview fetched %s\n"
+                       (furball--time (* 1000 (map-elt section :fetched-at))))
+               'face 'shadow)))))
+
+(defun furball--monitor-row (monitor view)
+  "Insert a MONITOR row belonging to VIEW."
+  (furball--row
+   (format "  %s  %s  #%s" (furball--status (map-elt monitor 'status))
+           (map-elt monitor 'name) (map-elt monitor 'id))
+   (list 'monitor (map-elt view :site) (map-elt monitor 'id)) 'monitor
+   `((:monitor-id . ,(map-elt monitor 'id)) (:site . ,(map-elt view :site))
+     (:log-view-functions . ,(map-elt view :log-view-functions))
+     (:directory-abbrev-alist . ,(map-elt view :directory-abbrev-alist))
+     (:project-directory-id-fn . ,(map-elt view :project-directory-id-fn)))))
 
 (defun furball--render-monitors (rows view)
   "Insert monitor ROWS belonging to VIEW."
   (unless rows (insert "\n  No monitor rows loaded.\n"))
-  (dolist (monitor rows)
-    (furball--row
-     (format "  %s  %s  #%s" (furball--status (map-elt monitor 'status))
-             (map-elt monitor 'name) (map-elt monitor 'id))
-     (list 'monitor (map-elt view :site) (map-elt monitor 'id)) 'monitor
-     `((:monitor-id . ,(map-elt monitor 'id)) (:site . ,(map-elt view :site))
-       (:log-view-functions . ,(map-elt view :log-view-functions))
-       (:directory-abbrev-alist . ,(map-elt view :directory-abbrev-alist))
-       (:project-directory-id-fn . ,(map-elt view :project-directory-id-fn))))))
+  (dolist (monitor rows) (furball--monitor-row monitor view)))
 
 (defun furball-toggle-log-preview ()
   "Expand or collapse the log at point without leaving the results buffer."
@@ -443,7 +532,9 @@ COUNTS is Datadog's counts.status list of alists with name and count."
                    (if (member key expanded)
                        (seq-remove (lambda (item) (equal item key)) expanded)
                      (cons key expanded)))))
-      (furball--render))))
+      (if furball--ewoc
+          (furball--redraw (ewoc-data (ewoc-locate furball--ewoc)))
+        (furball--render)))))
 
 (defun furball--configure-traceback-parser ()
   "Add Python exception-group frames to this buffer's compilation formats."
@@ -504,8 +595,8 @@ COUNTS is Datadog's counts.status list of alists with name and count."
                          (list 'furball-key key 'furball-action 'log 'furball-value log))
     (when view (put-text-property start (point) 'furball-view view))))
 
-(defun furball--render-logs ()
-  "Insert the log snapshot with its exact scope and provenance."
+(defun furball--insert-logs-header ()
+  "Insert the log snapshot's exact scope, provenance, and heading."
   (when-let* ((scope (map-elt furball--state :scope)))
     (insert (format "Window: %s → %s\n" (furball--time (map-elt scope :from))
                     (furball--time (map-elt scope :to))))
@@ -520,10 +611,7 @@ COUNTS is Datadog's counts.status list of alists with name and count."
     (when (map-elt scope :provenance)
       (insert (format "%s\n" (map-elt scope :provenance)))))
   (furball--heading (format "Logs · %s loaded · RET for details and traceback"
-                            (length (map-elt furball--state :rows))))
-  (dolist (log (map-elt furball--state :rows)) (furball--log-row log))
-  (unless (map-elt furball--state :rows)
-    (insert "  No log rows loaded.\n")))
+                            (length (map-elt furball--state :rows)))))
 
 (defun furball--insert-notification (template)
   "Insert notification TEMPLATE in a read-only Markdown source-style block.
